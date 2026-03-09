@@ -1,3 +1,4 @@
+import "dotenv/config";
 import http from "node:http";
 import os from "node:os";
 import fs from "node:fs";
@@ -9,6 +10,8 @@ import { scrape } from "../scraper.mjs";
 import { extract } from "../extractor.mjs";
 import { saveOutput } from "../output.mjs";
 import { createClaudeClient } from "./agent/claude-client.mjs";
+import { createGeminiClient } from "./agent/gemini-client.mjs";
+import { createGroqClient } from "./agent/groq-client.mjs";
 import { createJarvis } from "./agent/jarvis.mjs";
 import { createAgentWS } from "./agent/agent-ws.mjs";
 import { speak as edgeTTSSpeak, listVoices as edgeTTSVoices } from "./agent/edge-tts-proxy.mjs";
@@ -126,9 +129,13 @@ export function startServer(options = {}) {
 
     // Agent status endpoint
     if (req.method === "GET" && url.pathname === "/agent/status") {
-      const claudeClient = createClaudeClient();
+      const claude = createClaudeClient();
+      const gemini = createGeminiClient();
+      const groq = createGroqClient();
+      const ready = groq.isReady() || gemini.isReady() || claude.isReady();
+      const provider = groq.isReady() ? "groq" : gemini.isReady() ? "gemini" : claude.isReady() ? "claude" : "none";
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ready: claudeClient.isReady() }));
+      res.end(JSON.stringify({ ready, provider }));
       return;
     }
 
@@ -298,9 +305,33 @@ export function startServer(options = {}) {
     res.end("Not found");
   });
 
-  // Initialize Jarvis agent + WebSocket
+  // Initialize AI client — free-first, never blocked by billing.
+  // Priority: Groq (free, fastest) → Gemini Flash (free) → Claude (premium)
+  // Set PREFER_CLAUDE=1 to override and use Claude when credits exist.
   const claudeClient = createClaudeClient();
-  const jarvis = createJarvis(claudeClient);
+  const geminiClient = createGeminiClient();
+  const groqClient = createGroqClient();
+  const preferClaude = process.env.PREFER_CLAUDE === "1" && claudeClient.isReady();
+
+  let aiClient, aiProvider;
+  if (preferClaude) {
+    aiClient = claudeClient;
+    aiProvider = "claude-sonnet-4 (premium)";
+  } else if (groqClient.isReady()) {
+    aiClient = groqClient;
+    aiProvider = "llama-3.3-70b via Groq (free)";
+  } else if (geminiClient.isReady()) {
+    aiClient = geminiClient;
+    aiProvider = "gemini-2.0-flash (free)";
+  } else if (claudeClient.isReady()) {
+    aiClient = claudeClient;
+    aiProvider = "claude-sonnet-4 (premium)";
+  } else {
+    aiClient = claudeClient; // will show "not ready"
+    aiProvider = "none";
+  }
+
+  const jarvis = createJarvis(aiClient);
   createAgentWS(server, jarvis);
 
   // Initialize multiplayer rooms
@@ -311,11 +342,11 @@ export function startServer(options = {}) {
   const jarvisAgentId = agentRegistry.register({
     name: "Jarvis",
     type: "voice",
-    meta: { model: claudeClient.isReady() ? "claude-sonnet-4" : "not configured" },
+    meta: { model: aiProvider },
   });
   agentRegistry.update(jarvisAgentId, {
-    status: claudeClient.isReady() ? "idle" : "blocked",
-    currentTask: claudeClient.isReady() ? "Awaiting commands" : "Needs ANTHROPIC_API_KEY",
+    status: aiClient.isReady() ? "idle" : "blocked",
+    currentTask: aiClient.isReady() ? "Awaiting commands" : "Needs ANTHROPIC_API_KEY or GEMINI_API_KEY",
   });
   createPresenceWS(server, roomManager);
 
@@ -324,7 +355,7 @@ export function startServer(options = {}) {
     console.log("\nWeb Scraper running:");
     console.log(`  Scraper: http://localhost:${port}`);
     console.log(`  Spatial: http://localhost:${port}/spatial`);
-    console.log(`  Jarvis:  ${claudeClient.isReady() ? "ready" : "set ANTHROPIC_API_KEY to enable"}`);
+    console.log(`  Jarvis:  ${aiClient.isReady() ? `ready (${aiProvider})` : "set ANTHROPIC_API_KEY or GEMINI_API_KEY"}`);
     const ttsInfo = elevenConfigured()
       ? "ElevenLabs (premium) + Edge TTS (fallback)"
       : "Edge TTS (neural voice, no API key)";

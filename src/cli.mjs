@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { parseArgs } from "node:util";
 import { resolveUrl } from "./url-sources/index.mjs";
 import { scrape } from "./scraper.mjs";
