@@ -20,6 +20,8 @@ import { createRoomManager } from "./multiplayer/room-manager.mjs";
 import { createPresenceWS } from "./multiplayer/presence-ws.mjs";
 import { createAgentRegistry } from "./agent/agent-registry.mjs";
 import { getDashboardHtml } from "./dashboard-ui.mjs";
+import { createOllamaClient } from "./agent/ollama-client.mjs";
+import { createFailoverClient } from "./agent/failover-client.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -374,31 +376,29 @@ export function startServer(options = {}) {
     res.end("Not found");
   });
 
-  // Initialize AI client — free-first, never blocked by billing.
-  // Priority: Groq (free, fastest) → Gemini Flash (free) → Claude (premium)
-  // Set PREFER_CLAUDE=1 to override and use Claude when credits exist.
+  // Initialize AI clients — all providers, with automatic failover.
+  // Priority: Groq (free, fastest) → Gemini Flash (free) → Ollama (local) → Claude (premium)
+  // The failover client automatically retries with the next provider on 429/rate-limit.
   const claudeClient = createClaudeClient();
   const geminiClient = createGeminiClient();
   const groqClient = createGroqClient();
-  const preferClaude = process.env.PREFER_CLAUDE === "1" && claudeClient.isReady();
+  const ollamaClient = createOllamaClient();
 
-  let aiClient, aiProvider;
-  if (preferClaude) {
-    aiClient = claudeClient;
-    aiProvider = "claude-sonnet-4 (premium)";
-  } else if (groqClient.isReady()) {
-    aiClient = groqClient;
-    aiProvider = "llama-3.3-70b via Groq (free)";
-  } else if (geminiClient.isReady()) {
-    aiClient = geminiClient;
-    aiProvider = "gemini-2.0-flash (free)";
-  } else if (claudeClient.isReady()) {
-    aiClient = claudeClient;
-    aiProvider = "claude-sonnet-4 (premium)";
-  } else {
-    aiClient = claudeClient; // will show "not ready"
-    aiProvider = "none";
+  const providerList = [
+    { client: groqClient, name: "groq" },
+    { client: geminiClient, name: "gemini" },
+    { client: ollamaClient, name: "ollama" },
+    { client: claudeClient, name: "claude" },
+  ];
+
+  // If PREFER_CLAUDE=1, put Claude first
+  if (process.env.PREFER_CLAUDE === "1" && claudeClient.isReady()) {
+    providerList.unshift(providerList.splice(3, 1)[0]);
   }
+
+  const aiClient = createFailoverClient(providerList);
+  const activeProvider = aiClient.getActiveProvider();
+  const aiProvider = activeProvider ? `${activeProvider.name} (failover chain)` : "none";
 
   const jarvis = createJarvis(aiClient);
   createAgentWS(server, jarvis);
@@ -424,7 +424,8 @@ export function startServer(options = {}) {
     console.log("\nWeb Scraper running:");
     console.log(`  Scraper: http://localhost:${port}`);
     console.log(`  Spatial: http://localhost:${port}/spatial`);
-    console.log(`  Jarvis:  ${aiClient.isReady() ? `ready (${aiProvider})` : "set ANTHROPIC_API_KEY or GEMINI_API_KEY"}`);
+    const readyProviders = providerList.filter(p => p.client.isReady()).map(p => p.name).join(" → ");
+    console.log(`  Jarvis:  ${aiClient.isReady() ? `ready (${readyProviders || "none"} failover)` : "no AI providers available"}`);
     const ttsInfo = elevenConfigured()
       ? "ElevenLabs (premium) + Edge TTS (fallback)"
       : "Edge TTS (neural voice, no API key)";
