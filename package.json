@@ -9,7 +9,13 @@
   "scripts": {
     "start": "node scrape.mjs",
     "serve": "node scrape.mjs --serve",
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "test:e2e": "npx playwright test",
+    "test:e2e:chromium": "npx playwright test --project=chromium",
+    "test:e2e:webkit": "npx playwright test --project=webkit",
+    "test:e2e:mobile": "npx playwright test --project=iphone-15 --project=ipad-pro --project=pixel-7",
+    "test:e2e:report": "npx playwright show-report",
+    "test:all": "node --test test/ && npx playwright test --project=chromium"
   },
   "keywords": [
     "scraper",
@@ -26,5 +32,8 @@
     "edge-tts-universal": "^1.4.0",
     "turndown": "^7.2.2",
     "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2"
   }
 }

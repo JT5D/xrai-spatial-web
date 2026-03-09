@@ -9,3 +9,6 @@ output/
 credentials*.json
 service-account*.json
 .DS_Store
+playwright-report/
+test-results/
+Example Domain.*
