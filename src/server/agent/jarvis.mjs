@@ -101,23 +101,12 @@ export function createJarvis(claudeClient) {
       }
     }
 
-    // If there were tool calls, we need to add the assistant message with them
-    // and wait for tool results before continuing
+    // If there were tool calls, record them as text in history for Groq/Llama compatibility
     if (pendingToolCalls.length > 0) {
-      // Build assistant message with both text and tool_use blocks
-      const assistantContent = [];
-      if (fullText) {
-        assistantContent.push({ type: "text", text: fullText });
-      }
-      for (const tc of pendingToolCalls) {
-        assistantContent.push({
-          type: "tool_use",
-          id: tc.id,
-          name: tc.name,
-          input: tc.input,
-        });
-      }
-      history.push({ role: "assistant", content: assistantContent });
+      const toolSummary = pendingToolCalls.map(tc =>
+        `[Calling tool: ${tc.name}(${JSON.stringify(tc.input)})]`
+      ).join("\n");
+      history.push({ role: "assistant", content: (fullText ? fullText + "\n" : "") + toolSummary });
     } else {
       // Simple text response
       if (fullText) {
@@ -132,64 +121,32 @@ export function createJarvis(claudeClient) {
    * toolResults: [{ tool_use_id, result }]
    */
   async function* continueWithToolResults(toolResults) {
-    // Add tool results to history
-    const toolContent = toolResults.map((tr) => ({
-      type: "tool_result",
-      tool_use_id: tr.tool_use_id,
-      content: JSON.stringify(tr.result),
-    }));
-    history.push({ role: "user", content: toolContent });
+    // Flatten tool results as plain text to avoid tool-calling loops with Groq/Llama.
+    // The model sees results as text and must generate a text response (no tools passed).
+    const resultText = toolResults.map((tr) => {
+      const data = typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result);
+      return `[Tool Result] ${data}`;
+    }).join("\n");
+    history.push({ role: "user", content: resultText });
 
-    const contextualSystem = SYSTEM_PROMPT + buildContextMessage();
+    const contextualSystem = SYSTEM_PROMPT + buildContextMessage()
+      + "\nRespond to the user based on the tool results above. Do not call tools again.";
     let fullText = "";
-    let morePendingTools = [];
 
-    for await (const event of claudeClient.stream(
-      contextualSystem,
-      history,
-      HUD_TOOLS
-    )) {
+    for await (const event of claudeClient.stream(contextualSystem, history, [])) {
       if (event.type === "text_delta") {
         fullText += event.text;
         yield { type: "text_delta", text: event.text };
-      } else if (event.type === "tool_use_done") {
-        morePendingTools.push({
-          id: event.id,
-          name: event.name,
-          input: event.input,
-        });
-        yield {
-          type: "needs_tool_result",
-          tool_use_id: event.id,
-          name: event.name,
-          input: event.input,
-        };
       } else if (event.type === "error") {
         yield event;
         return;
       }
     }
 
-    if (morePendingTools.length > 0) {
-      const assistantContent = [];
-      if (fullText) {
-        assistantContent.push({ type: "text", text: fullText });
-      }
-      for (const tc of morePendingTools) {
-        assistantContent.push({
-          type: "tool_use",
-          id: tc.id,
-          name: tc.name,
-          input: tc.input,
-        });
-      }
-      history.push({ role: "assistant", content: assistantContent });
-    } else {
-      if (fullText) {
-        history.push({ role: "assistant", content: fullText });
-      }
-      yield { type: "done", full_text: fullText };
+    if (fullText) {
+      history.push({ role: "assistant", content: fullText });
     }
+    yield { type: "done", full_text: fullText };
   }
 
   function clearHistory() {

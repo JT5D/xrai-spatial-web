@@ -60,7 +60,6 @@ export function createFailoverClient(providers) {
 
       for await (const event of tryProvider(provider, systemPrompt, messages, tools, tried)) {
         if (event.type === "_failover") {
-          // Internal signal: this provider failed, try next
           break;
         }
         if (event.type === "text_delta" || event.type === "tool_use_done") {

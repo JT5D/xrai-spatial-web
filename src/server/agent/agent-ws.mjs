@@ -20,6 +20,11 @@ export function createAgentWS(server, jarvis) {
   wss.on("connection", (ws) => {
     let pendingToolCalls = new Map(); // tool_use_id → { name, input }
     let activeGenerator = null;
+    let toolRoundTrips = 0;
+    const MAX_TOOL_ROUNDS = 5;
+
+    // Fresh conversation per connection
+    jarvis.clearHistory();
 
     ws.on("message", async (data) => {
       let msg;
@@ -45,6 +50,11 @@ export function createAgentWS(server, jarvis) {
 
         // If all pending tool calls are resolved, continue
         if (pendingToolCalls.size === 0) {
+          toolRoundTrips++;
+          if (toolRoundTrips > MAX_TOOL_ROUNDS) {
+            ws.send(JSON.stringify({ type: "error", message: "Too many tool call rounds. Please try a simpler question." }));
+            return;
+          }
           const results = [
             {
               tool_use_id: msg.tool_use_id,
@@ -68,6 +78,7 @@ export function createAgentWS(server, jarvis) {
         if (!msg.text?.trim()) return;
 
         pendingToolCalls.clear();
+        toolRoundTrips = 0;
 
         try {
           activeGenerator = jarvis.handleMessage(msg.text.trim());

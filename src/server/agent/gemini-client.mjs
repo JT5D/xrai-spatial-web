@@ -24,21 +24,44 @@ export function createGeminiClient(options = {}) {
    * Gemini:    [{ role: "user"|"model", parts: [{ text }] }]
    */
   function convertMessages(messages) {
-    return messages.map((msg) => {
+    const out = [];
+    for (const msg of messages) {
       const role = msg.role === "assistant" ? "model" : "user";
-      let parts;
+
       if (typeof msg.content === "string") {
-        parts = [{ text: msg.content }];
+        out.push({ role, parts: [{ text: msg.content }] });
       } else if (Array.isArray(msg.content)) {
-        parts = msg.content
-          .filter((b) => b.type === "text")
-          .map((b) => ({ text: b.text }));
-        if (parts.length === 0) parts = [{ text: "" }];
+        const toolUses = msg.content.filter((b) => b.type === "tool_use");
+        const toolResults = msg.content.filter((b) => b.type === "tool_result");
+        const textBlocks = msg.content.filter((b) => b.type === "text");
+
+        if (toolUses.length > 0 && msg.role === "assistant") {
+          // Gemini: model message with functionCall parts
+          const parts = [];
+          for (const tb of textBlocks) parts.push({ text: tb.text });
+          for (const tu of toolUses) {
+            parts.push({ functionCall: { name: tu.name, args: tu.input || {} } });
+          }
+          out.push({ role: "model", parts });
+        } else if (toolResults.length > 0) {
+          // Gemini: user message with functionResponse parts
+          const parts = toolResults.map((tr) => ({
+            functionResponse: {
+              name: tr.tool_use_id, // Gemini uses name, but we use ID as fallback
+              response: typeof tr.content === "string" ? JSON.parse(tr.content || "{}") : tr.content,
+            },
+          }));
+          out.push({ role: "user", parts });
+        } else {
+          const parts = textBlocks.map((b) => ({ text: b.text }));
+          if (parts.length === 0) parts.push({ text: "" });
+          out.push({ role, parts });
+        }
       } else {
-        parts = [{ text: String(msg.content) }];
+        out.push({ role, parts: [{ text: String(msg.content) }] });
       }
-      return { role, parts };
-    });
+    }
+    return out;
   }
 
   /**

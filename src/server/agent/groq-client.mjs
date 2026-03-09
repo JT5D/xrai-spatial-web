@@ -27,12 +27,37 @@ export function createGroqClient(options = {}) {
       if (typeof msg.content === "string") {
         out.push({ role: msg.role, content: msg.content });
       } else if (Array.isArray(msg.content)) {
-        // Extract text from content blocks
-        const text = msg.content
-          .filter((b) => b.type === "text")
-          .map((b) => b.text)
-          .join("\n");
-        if (text) out.push({ role: msg.role, content: text });
+        // Check for tool_use blocks (assistant message with tool calls)
+        const toolUses = msg.content.filter((b) => b.type === "tool_use");
+        const toolResults = msg.content.filter((b) => b.type === "tool_result");
+        const textBlocks = msg.content.filter((b) => b.type === "text");
+
+        if (toolUses.length > 0 && msg.role === "assistant") {
+          // Convert to OpenAI assistant message with tool_calls
+          const text = textBlocks.map((b) => b.text).join("\n") || null;
+          out.push({
+            role: "assistant",
+            content: text,
+            tool_calls: toolUses.map((tu) => ({
+              id: tu.id,
+              type: "function",
+              function: { name: tu.name, arguments: JSON.stringify(tu.input || {}) },
+            })),
+          });
+        } else if (toolResults.length > 0) {
+          // Convert each tool result to an OpenAI tool message
+          for (const tr of toolResults) {
+            out.push({
+              role: "tool",
+              content: typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content),
+              tool_call_id: tr.tool_use_id,
+            });
+          }
+        } else {
+          // Plain text content blocks
+          const text = textBlocks.map((b) => b.text).join("\n");
+          if (text) out.push({ role: msg.role, content: text });
+        }
       }
     }
     return out;
