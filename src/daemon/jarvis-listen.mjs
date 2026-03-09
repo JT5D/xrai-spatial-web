@@ -20,6 +20,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGroqClient } from "../server/agent/groq-client.mjs";
 import { createGeminiClient } from "../server/agent/gemini-client.mjs";
+import { createOllamaClient } from "../server/agent/ollama-client.mjs";
 import { TOOL_SCHEMAS, executeTool } from "./jarvis-tools.mjs";
 import { memoryInit, memoryWrite } from "./shared-memory.mjs";
 import { logActivity } from "./activity-log.mjs";
@@ -83,7 +84,8 @@ let silentRounds = 0;
 let conversationHistory = [];
 let groqClient = null;
 let geminiClient = null;
-let activeProvider = "groq"; // "groq" or "gemini"
+let ollamaClient = null;
+let activeProvider = "groq"; // "groq", "gemini", or "ollama"
 let serverBaseUrl = "http://localhost:3210";
 
 function log(msg) {
@@ -188,9 +190,11 @@ function matchWakeWord(text) {
  * Get the currently active AI client. Supports failover: Groq → Gemini.
  */
 function getActiveClient() {
+  if (activeProvider === "ollama" && ollamaClient?.isReady()) return ollamaClient;
   if (activeProvider === "gemini" && geminiClient?.isReady()) return geminiClient;
   if (groqClient?.isReady()) return groqClient;
   if (geminiClient?.isReady()) return geminiClient;
+  if (ollamaClient?.isReady()) return ollamaClient;
   return null;
 }
 
@@ -204,11 +208,12 @@ let allExhaustedUntil = 0; // timestamp — skip all requests until this time
 function switchProvider(reason) {
   failedProviders.add(activeProvider);
 
-  // Check if ALL providers are exhausted
-  const availableProviders = ["groq", "gemini"].filter(p => {
+  // Check if ALL providers are exhausted (Ollama = last resort local fallback)
+  const availableProviders = ["groq", "gemini", "ollama"].filter(p => {
     if (failedProviders.has(p)) return false;
     if (p === "groq" && !groqClient?.isReady()) return false;
     if (p === "gemini" && !geminiClient?.isReady()) return false;
+    if (p === "ollama" && !ollamaClient?.isReady()) return false;
     return true;
   });
 
@@ -424,18 +429,25 @@ async function speak(text) {
 async function main() {
   groqClient = createGroqClient();
   geminiClient = createGeminiClient();
+  ollamaClient = createOllamaClient();
 
-  if (!groqClient.isReady() && !geminiClient.isReady()) {
-    console.error("No AI API keys set. Add GROQ_API_KEY or GEMINI_API_KEY to .env");
+  // Wait briefly for Ollama availability check
+  await new Promise(r => setTimeout(r, 500));
+
+  if (!groqClient.isReady() && !geminiClient.isReady() && !ollamaClient.isReady()) {
+    console.error("No AI providers available. Add GROQ_API_KEY or GEMINI_API_KEY to .env, or start Ollama.");
     process.exit(1);
   }
 
-  // Start with Groq if available, otherwise Gemini
+  // Start with best available: Groq → Gemini → Ollama
   if (groqClient.isReady()) {
     activeProvider = "groq";
-  } else {
+  } else if (geminiClient.isReady()) {
     activeProvider = "gemini";
     log("Groq unavailable, starting with Gemini");
+  } else {
+    activeProvider = "ollama";
+    log("Cloud providers unavailable, starting with local Ollama");
   }
 
   // Initialize shared memory
@@ -457,7 +469,7 @@ async function main() {
   console.log("\n\x1b[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m");
   console.log("\x1b[36m  Jarvis Always-On Daemon v2\x1b[0m");
   console.log("\x1b[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m");
-  const providers = [groqClient?.isReady() && "Groq", geminiClient?.isReady() && "Gemini"].filter(Boolean).join(" → ");
+  const providers = [groqClient?.isReady() && "Groq", geminiClient?.isReady() && "Gemini", ollamaClient?.isReady() && "Ollama (local)"].filter(Boolean).join(" → ");
   console.log(`  Brain:    ${providers} (auto-failover)`);
   console.log(`  Voice:    Edge TTS → macOS say (fallback)`);
   console.log(`  STT:      Groq Whisper (free)`);
@@ -474,7 +486,8 @@ async function main() {
   }, 30_000);
   heartbeatTimer.unref();
 
-  await speak(`Jarvis online with ${activeProvider === "groq" ? "Groq" : "Gemini"} and auto-failover.`);
+  const providerNames = { groq: "Groq", gemini: "Gemini", ollama: "local Ollama" };
+  await speak(`Jarvis online with ${providerNames[activeProvider] || activeProvider} and auto-failover.`);
 
   while (true) {
     try {

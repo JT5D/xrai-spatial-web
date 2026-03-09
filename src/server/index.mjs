@@ -175,6 +175,7 @@ export function startServer(options = {}) {
             { id: "claude", name: "Claude Opus", status: claude.isReady() ? "active" : "unavailable", model: "claude-opus-4-6" },
             { id: "whisper", name: "Groq Whisper (STT)", status: groq.isReady() ? "ok" : "unavailable", model: "whisper-large-v3" },
             { id: "edge-tts", name: "Edge TTS", status: "ok", model: "en-US-GuyNeural" },
+            { id: "ollama", name: "Ollama (Local)", status: providerInfo.active === "ollama" ? "active" : "standby", model: "llama3.1:latest" },
           ],
           tools: [
             { id: "run_shell", name: "Shell", agent: "jarvis" },
