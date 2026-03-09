@@ -23,6 +23,7 @@ import { createAgentTools } from "./agent/agent-tools.mjs";
 import { createAgentBridge } from "./agent/agent-bridge.mjs";
 import { createQRSharing } from "./sharing/qr-code.mjs";
 import { createWebcamGesture } from "./interaction/webcam-gesture.mjs";
+import { createHandTracker } from "./interaction/hand-tracker.mjs";
 import { createViewRegistry } from "./views/view-registry.mjs";
 import { createForceGraphView } from "./views/layouts/force-graph.mjs";
 import { createMediaCityView } from "./views/layouts/media-city.mjs";
@@ -79,15 +80,26 @@ export async function initHUD(container, options = {}) {
   // 6b. Auto-start passive listening (wake word: "Hey Jarvis")
   voiceInput.startPassive();
 
-  // 6c. QR sharing + webcam gesture (optional)
+  // 6c. QR sharing + hand tracking (MediaPipe) with webcam gesture fallback
   const qrSharing = createQRSharing(container, hooks);
-  const webcamGesture = createWebcamGesture(hooks);
+  const handTracker = createHandTracker(hooks);
+  const webcamGesture = createWebcamGesture(hooks); // fallback if MediaPipe fails
 
-  // Wire webcam gestures to navigation
+  // Wire hand gestures to navigation
   hooks.on("webcam:gesture", ({ action }) => {
     if (action === "zoom-in") hooks.emit("camera:zoom-in");
     else if (action === "zoom-out") hooks.emit("focus:clear");
     else if (action === "select") hooks.emit("focus:select", { nodeId: null });
+  });
+
+  // Wire hand:pinch to node selection
+  hooks.on("hand:pinch", ({ x, y }) => {
+    hooks.emit("interaction:pinch", { x, y });
+  });
+
+  // Wire hand:point to gaze-like aiming
+  hooks.on("hand:point", ({ x, y, direction }) => {
+    hooks.emit("interaction:point", { x, y, direction });
   });
 
   // 7. View registry — pluggable layout modes
@@ -196,9 +208,15 @@ export async function initHUD(container, options = {}) {
       isListening() { return voiceInput.isListening(); },
     },
     webcam: {
-      toggle() { webcamGesture.toggle(); },
-      isActive() { return webcamGesture.isActive(); },
-      isSupported() { return webcamGesture.isSupported(); },
+      toggle() { handTracker.isSupported() ? handTracker.toggle() : webcamGesture.toggle(); },
+      isActive() { return handTracker.isActive() || webcamGesture.isActive(); },
+      isSupported() { return handTracker.isSupported() || webcamGesture.isSupported(); },
+    },
+    hands: {
+      start() { handTracker.start(); },
+      stop() { handTracker.stop(); },
+      toggle() { handTracker.toggle(); },
+      isActive() { return handTracker.isActive(); },
     },
     share: {
       generateQR() { qrSharing.generateQR(); },
@@ -210,6 +228,7 @@ export async function initHUD(container, options = {}) {
       agentOverlay.dispose();
       qrSharing.dispose();
       webcamGesture.dispose();
+      handTracker.dispose();
       viewRegistry.dispose();
       graph.dispose();
       nodes.clear();
