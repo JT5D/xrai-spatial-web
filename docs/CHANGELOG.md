@@ -87,3 +87,31 @@ After researching 12+ tools: React Three Fiber + Three.js WebGPU (MIT, productio
 16 extractable modules identified. Wire System (50 lines, zero deps) is the ideal first extraction. Extraction sequence: zero-dep → firebase-only → complex → AR-dependent.
 
 **Lesson:** When extracting modules from a larger codebase, start with zero-dependency modules. They port cleanly and prove the extraction pattern before tackling modules with complex dependencies.
+
+### 2026-03-09 — BUG-FIX — Groq Daily Token Limit + Multi-Provider Failover
+**Agent:** claude-code  **Confidence:** high
+**Impact:** bug-fix, architecture
+**Files:** `src/daemon/jarvis-listen.mjs`, `src/server/agent/gemini-client.mjs`
+
+Groq's 100K TPD (tokens per day) limit was exhausted, causing Jarvis to repeat "I'm having trouble thinking." Added automatic failover: Groq → Gemini 2.5-flash. Anti-ping-pong logic prevents infinite switching when both providers are down (60s cooldown). Auto-retries Groq every 10 minutes.
+
+**Root Cause:** Groq free tier has 100K TPD. Also, `gemini-2.0-flash` had quota=0; needed `gemini-2.5-flash`.
+**Lesson:** Always test model availability before assuming. Multiple free providers with automatic failover is essential. Track per-provider quotas separately. Anti-ping-pong logic prevents crash loops when all providers fail.
+
+### 2026-03-09 — UNLOCK — MediaPipe Hand Tracking (21-Joint Skeleton)
+**Agent:** claude-code  **Confidence:** high
+**Impact:** unlock
+**Files:** `src/server/hud/interaction/hand-tracker.mjs`, `src/server/hud/orchestrator.mjs`
+
+Real hand tracking via MediaPipe Tasks Vision (CDN, GPU-delegated). Detects: pinch (thumb-index), point (index extended), grab (all curled), swipe (palm velocity). Backward compatible — emits same `webcam:gesture` events as basic motion detection fallback.
+
+**Lesson:** MediaPipe Tasks Vision loads from CDN with zero npm deps. GPU delegation is key for 30fps. Lazy-loading the model (~5MB) prevents blocking page load.
+
+### 2026-03-09 — UNLOCK — System HUD (View Mode 5: Live Agent Swarm)
+**Agent:** claude-code  **Confidence:** high
+**Impact:** unlock, architecture
+**Files:** `src/server/hud/views/layouts/system-hud.mjs`, `src/server/index.mjs`
+
+Live visualization of the agent swarm: agents, providers, tools, shared memory, data flows. Polls `/agent/system-state` every 2s. Concentric ring layout with color-coded nodes, pulsing animations for active agents, and labeled edges showing data flow types (uses, reads-writes, invokes).
+
+**Lesson:** Making the agent system observable is as important as making it functional. The system state endpoint aggregates shared memory + activity log into a single JSON response that the 3D visualization consumes.
