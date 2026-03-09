@@ -179,16 +179,20 @@ async function getResponse(text) {
   const start = Date.now();
   conversationHistory.push({ role: "user", content: text });
 
-  if (conversationHistory.length > 20) {
-    conversationHistory = conversationHistory.slice(-20);
+  // Aggressive trim — Groq free tier has 12K TPM limit
+  if (conversationHistory.length > 12) {
+    conversationHistory = conversationHistory.slice(-12);
   }
 
   let finalResponse = "";
   let toolRounds = 0;
+  let retries = 0;
+  const MAX_RETRIES = 3;
 
   while (toolRounds < MAX_TOOL_ROUNDS) {
     let response = "";
     let toolCalls = [];
+    let rateLimited = false;
 
     for await (const event of groqClient.stream(JARVIS_SYSTEM, conversationHistory, TOOL_SCHEMAS)) {
       if (event.type === "text_delta") response += event.text;
@@ -196,10 +200,19 @@ async function getResponse(text) {
         toolCalls.push({ id: event.id, name: event.name, input: event.input });
       }
       if (event.type === "error") {
+        if (event.message.includes("429") && retries < MAX_RETRIES) {
+          log(`\x1b[33mRate limited, waiting 5s... (retry ${retries + 1}/${MAX_RETRIES})\x1b[0m`);
+          await new Promise(r => setTimeout(r, 5000));
+          retries++;
+          rateLimited = true;
+          break;
+        }
         log(`\x1b[31mAI Error: ${event.message}\x1b[0m`);
-        return "I'm having trouble thinking right now. Try again.";
+        return "I'm having trouble thinking right now. Try again in a few seconds.";
       }
     }
+
+    if (rateLimited) continue; // retry the same round
 
     if (toolCalls.length === 0) {
       // No tool calls — this is the final text response
@@ -229,10 +242,11 @@ async function getResponse(text) {
       const result = executeTool(tc.name, tc.input);
       logTool(tc.name, result);
 
-      // Feed tool result back as user message (Groq/OpenAI format)
+      // Feed tool result back — truncate aggressively to stay within TPM limits
+      const truncResult = String(result).slice(0, 800);
       conversationHistory.push({
         role: "user",
-        content: `[Tool result for ${tc.name}]: ${String(result).slice(0, 2000)}`,
+        content: `[Tool result for ${tc.name}]: ${truncResult}`,
       });
     }
 

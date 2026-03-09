@@ -212,7 +212,7 @@ export function executeTool(name, input) {
           break;
         }
         const content = fs.readFileSync(filePath, "utf-8");
-        const maxLines = input.max_lines || 100;
+        const maxLines = input.max_lines || 40;
         const lines = content.split("\n").slice(0, maxLines);
         result = lines.join("\n");
         if (content.split("\n").length > maxLines) {
