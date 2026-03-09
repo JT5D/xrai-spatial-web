@@ -190,39 +190,67 @@ async function getResponse(text) {
   conversationHistory.push({ role: "user", content: text });
 
   // Aggressive trim — Groq free tier has 12K TPM limit
-  if (conversationHistory.length > 12) {
-    conversationHistory = conversationHistory.slice(-12);
+  if (conversationHistory.length > 10) {
+    conversationHistory = conversationHistory.slice(-10);
+  }
+
+  // Estimate token count — nuke history if bloated
+  const totalChars = conversationHistory.reduce((sum, m) => sum + (typeof m.content === "string" ? m.content.length : 200), 0);
+  if (totalChars > 8000) {
+    log(`\x1b[33mContext too large (${totalChars} chars), trimming to last 6 messages\x1b[0m`);
+    conversationHistory = conversationHistory.slice(-6);
   }
 
   let finalResponse = "";
   let toolRounds = 0;
   let retries = 0;
   const MAX_RETRIES = 3;
+  let consecutiveErrors = 0;
 
   while (toolRounds < MAX_TOOL_ROUNDS) {
     let response = "";
     let toolCalls = [];
     let rateLimited = false;
 
-    for await (const event of groqClient.stream(JARVIS_SYSTEM, conversationHistory, TOOL_SCHEMAS)) {
-      if (event.type === "text_delta") response += event.text;
-      if (event.type === "tool_use_done") {
-        toolCalls.push({ id: event.id, name: event.name, input: event.input });
-      }
-      if (event.type === "error") {
-        if (event.message.includes("429") && retries < MAX_RETRIES) {
-          log(`\x1b[33mRate limited, waiting 5s... (retry ${retries + 1}/${MAX_RETRIES})\x1b[0m`);
-          await new Promise(r => setTimeout(r, 5000));
-          retries++;
-          rateLimited = true;
-          break;
+    try {
+      for await (const event of groqClient.stream(JARVIS_SYSTEM, conversationHistory, TOOL_SCHEMAS)) {
+        if (event.type === "text_delta") response += event.text;
+        if (event.type === "tool_use_done") {
+          toolCalls.push({ id: event.id, name: event.name, input: event.input });
         }
-        log(`\x1b[31mAI Error: ${event.message}\x1b[0m`);
-        return "I'm having trouble thinking right now. Try again in a few seconds.";
+        if (event.type === "error") {
+          consecutiveErrors++;
+          if (event.message.includes("429") && retries < MAX_RETRIES) {
+            const waitSec = 5 * (retries + 1); // escalating backoff: 5s, 10s, 15s
+            log(`\x1b[33mRate limited, waiting ${waitSec}s... (retry ${retries + 1}/${MAX_RETRIES})\x1b[0m`);
+            await new Promise(r => setTimeout(r, waitSec * 1000));
+            retries++;
+            rateLimited = true;
+            break;
+          }
+          // On repeated errors, clear history and try fresh
+          if (consecutiveErrors >= 2) {
+            log(`\x1b[33mMultiple errors, clearing conversation history\x1b[0m`);
+            conversationHistory = [{ role: "user", content: text }];
+            consecutiveErrors = 0;
+            rateLimited = true;
+            break;
+          }
+          log(`\x1b[31mAI Error: ${event.message}\x1b[0m`);
+          logActivity({ agent: "jarvis-daemon", action: "ai-error", success: false, error: event.message });
+          return "I hit a snag. Give me a moment and try again.";
+        }
       }
+    } catch (streamErr) {
+      log(`\x1b[31mStream error: ${streamErr.message}\x1b[0m`);
+      logActivity({ agent: "jarvis-daemon", action: "stream-error", success: false, error: streamErr.message });
+      // Clear history on stream errors to prevent stuck state
+      conversationHistory = [{ role: "user", content: text }];
+      return "I lost my train of thought. Could you repeat that?";
     }
 
     if (rateLimited) continue; // retry the same round
+    consecutiveErrors = 0; // reset on success
 
     if (toolCalls.length === 0) {
       // No tool calls — this is the final text response
@@ -230,17 +258,7 @@ async function getResponse(text) {
       break;
     }
 
-    // Build assistant message with tool calls for conversation history
-    const assistantContent = [];
-    if (response) assistantContent.push({ type: "text", text: response });
-    for (const tc of toolCalls) {
-      assistantContent.push({
-        type: "tool_use",
-        id: tc.id,
-        name: tc.name,
-        input: tc.input,
-      });
-    }
+    // Build assistant message for conversation history
     conversationHistory.push({
       role: "assistant",
       content: response || `Using tool: ${toolCalls.map(t => t.name).join(", ")}`,
@@ -252,11 +270,11 @@ async function getResponse(text) {
       const result = executeTool(tc.name, tc.input);
       logTool(tc.name, result);
 
-      // Feed tool result back — truncate aggressively to stay within TPM limits
-      const truncResult = String(result).slice(0, 800);
+      // Feed tool result back — truncate HARD to stay within TPM limits
+      const truncResult = String(result).slice(0, 500);
       conversationHistory.push({
         role: "user",
-        content: `[Tool result for ${tc.name}]: ${truncResult}`,
+        content: `[Tool: ${tc.name}]: ${truncResult}`,
       });
     }
 
@@ -341,7 +359,13 @@ async function main() {
   console.log(`  Partner:  Claude Code (shared memory coordination)`);
   console.log(`\x1b[90m  Press Ctrl+C to stop\x1b[0m\n`);
 
-  await speak("Jarvis online, version 2. I now have tools. I can open browsers, run commands, read code, and coordinate with Claude Code through shared memory.");
+  // Heartbeat — supervisor uses this to detect stalls
+  const heartbeatTimer = setInterval(() => {
+    memoryWrite("jarvis-heartbeat", Date.now());
+  }, 30_000);
+  heartbeatTimer.unref();
+
+  await speak("Jarvis online. I have tools and auto-learning. I can coordinate with Claude Code through shared memory.");
 
   while (true) {
     try {
