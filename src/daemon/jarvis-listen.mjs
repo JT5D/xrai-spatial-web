@@ -22,6 +22,7 @@ import { createGroqClient } from "../server/agent/groq-client.mjs";
 import { TOOL_SCHEMAS, executeTool } from "./jarvis-tools.mjs";
 import { memoryInit, memoryWrite } from "./shared-memory.mjs";
 import { logActivity } from "./activity-log.mjs";
+import { initLearning } from "./agent-learning.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMP_DIR = "/tmp/jarvis-daemon";
@@ -36,15 +37,24 @@ YOU HAVE TOOLS. You are NOT just a chatbot. You can:
 - Search codebases (search_project)
 - Read/write shared memory (read_memory, write_memory)
 - Read activity logs (read_activity_log)
+- Record learnings/patterns (record_lesson) — saves to agent memory for auto-improvement
+- Write to Knowledge Base (write_kb) — write research findings to the KB repo
 
 When the user asks you to DO something (open a page, check code, create a file, search for something),
 USE YOUR TOOLS. Don't just say you'll do it — actually do it.
+
+AUTO-LEARNING:
+- After completing significant tasks, use record_lesson to save what worked/failed.
+- Categories: bug-fix, pattern, optimization, tool-usage, architecture.
+- Use write_kb to save important research findings to the Knowledge Base.
+- Check shared memory for lessons from other agents before attempting tasks.
 
 AGENT COORDINATION:
 - You work alongside "Claude Code" (another AI agent the user runs in their terminal).
 - You share memory via read_memory/write_memory. Check it regularly for updates from Claude Code.
 - Log important findings to memory so Claude Code can use them.
 - If the user tells you something important, write it to memory.
+- Be TOKEN EFFICIENT — keep responses short, truncate tool results mentally.
 
 Known projects:
 - xrai-spatial-web: /Users/jamestunick/Applications/web-scraper (this project)
@@ -304,6 +314,7 @@ async function main() {
 
   // Initialize shared memory
   memoryInit();
+  initLearning(); // Start auto-learning from activity log
   memoryWrite("jarvis-status", "online");
   memoryWrite("jarvis-capabilities", [
     "voice-listen", "voice-speak", "open-browser", "run-shell",

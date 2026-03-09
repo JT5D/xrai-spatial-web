@@ -11,12 +11,16 @@
  *   write_memory     — Write to shared agent memory
  *   read_activity    — Read recent activity log
  *   search_project   — Search for text across a project
+ *   record_lesson    — Record a learning/pattern/bug-fix to agent memory
+ *   write_kb         — Write research findings to the Knowledge Base
  */
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { memoryRead, memoryWrite, memoryKeys } from "./shared-memory.mjs";
 import { logActivity, readLog, getPerformanceSummary } from "./activity-log.mjs";
+import { recordLesson, getLessons, getAgentStats } from "./agent-learning.mjs";
+import { writeToKB, appendToKB, listKBFiles } from "./kb-writer.mjs";
 
 // ─── Tool Schemas (OpenAI function-calling format for Groq) ───
 
@@ -123,6 +127,38 @@ export const TOOL_SCHEMAS = [
         file_pattern: { type: "string", description: "Glob pattern to filter files (e.g. '*.mjs', '*.ts')" },
       },
       required: ["project", "query"],
+    },
+  },
+  {
+    name: "record_lesson",
+    description: "Record a learning, pattern, bug-fix, or optimization to the agent's persistent memory. Use this when you discover something worth remembering — a pattern that works, a bug fix, an optimization trick, or an architectural insight. Categories: bug-fix, pattern, optimization, tool-usage, architecture.",
+    input_schema: {
+      type: "object",
+      properties: {
+        category: { type: "string", description: "Lesson category: 'bug-fix', 'pattern', 'optimization', 'tool-usage', or 'architecture'" },
+        lesson: { type: "string", description: "The lesson or finding to record" },
+        confidence: { type: "number", description: "Confidence level 0.0-1.0 (default: 0.8)" },
+        source: { type: "string", description: "Where this lesson came from (default: 'jarvis')" },
+        related_files: { type: "string", description: "Comma-separated list of related file paths (optional)" },
+      },
+      required: ["category", "lesson"],
+    },
+  },
+  {
+    name: "write_kb",
+    description: "Write research findings, documentation, or knowledge to the Knowledge Base at ~/Documents/GitHub/Unity-XR-AI/KnowledgeBase/. Can create new files or append to existing ones. Files follow _TOPIC_NAME.md naming convention. Auto-commits to git.",
+    input_schema: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "Topic name for new files (e.g. 'Agent Learning Patterns'). Used to generate filename." },
+        content: { type: "string", description: "Markdown content to write" },
+        mode: { type: "string", description: "'write' for new file, 'append' to add to existing file, 'list' to list KB files (default: 'write')" },
+        filename: { type: "string", description: "For append mode: existing filename to append to (e.g. '_AGENT_PATTERNS.md')" },
+        section: { type: "string", description: "For append mode: section heading (e.g. '## New Findings')" },
+        overwrite: { type: "boolean", description: "For write mode: overwrite existing file (default: false)" },
+        filter: { type: "string", description: "For list mode: filter filenames containing this string" },
+      },
+      required: [],
     },
   },
 ];
@@ -287,6 +323,79 @@ export function executeTool(name, input) {
           result = output.slice(0, 3000) || "No matches found.";
         } catch {
           result = "No matches found.";
+        }
+        break;
+      }
+
+      case "record_lesson": {
+        const relatedFiles = input.related_files
+          ? input.related_files.split(",").map((f) => f.trim()).filter(Boolean)
+          : [];
+        const lessonResult = recordLesson({
+          category: input.category,
+          lesson: input.lesson,
+          confidence: input.confidence,
+          source: input.source || "jarvis",
+          relatedFiles,
+        });
+        if (lessonResult.error) {
+          result = `Failed to record lesson: ${lessonResult.error}`;
+          success = false;
+        } else if (lessonResult.status === "duplicate") {
+          result = `Lesson already recorded (duplicate). Category: ${input.category}`;
+        } else {
+          result = `Lesson recorded! Category: ${input.category}, total lessons: ${lessonResult.totalLessons}. "${input.lesson.slice(0, 80)}"`;
+        }
+        break;
+      }
+
+      case "write_kb": {
+        const kbMode = input.mode || "write";
+
+        if (kbMode === "list") {
+          const listResult = listKBFiles({ filter: input.filter });
+          if (listResult.error) {
+            result = `KB list error: ${listResult.error}`;
+            success = false;
+          } else {
+            const fileList = listResult.files
+              .slice(0, 30)
+              .map((f) => `  ${f.filename} (${Math.round(f.sizeBytes / 1024)}KB)`)
+              .join("\n");
+            result = `KB has ${listResult.count} files:\n${fileList}`;
+          }
+        } else if (kbMode === "append") {
+          if (!input.filename || !input.content) {
+            result = "Append mode requires 'filename' and 'content'.";
+            success = false;
+          } else {
+            const appendResult = appendToKB(input.filename, input.section || "", input.content, {
+              createIfMissing: true,
+            });
+            if (appendResult.error) {
+              result = `KB append error: ${appendResult.error}`;
+              success = false;
+            } else {
+              result = `Appended ${appendResult.appendedBytes} bytes to ${appendResult.filename}. Git committed: ${appendResult.committed}`;
+            }
+          }
+        } else {
+          // write mode
+          if (!input.topic || !input.content) {
+            result = "Write mode requires 'topic' and 'content'.";
+            success = false;
+          } else {
+            const writeResult = writeToKB(input.topic, input.content, {
+              overwrite: input.overwrite === true,
+              filename: input.filename,
+            });
+            if (writeResult.error) {
+              result = `KB write error: ${writeResult.error}`;
+              success = false;
+            } else {
+              result = `Wrote ${writeResult.bytes} bytes to ${writeResult.filename}. Git committed: ${writeResult.committed}`;
+            }
+          }
         }
         break;
       }

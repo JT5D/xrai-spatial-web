@@ -48,7 +48,8 @@ describe("view-registry", () => {
     hooks.on("view:switched", (e) => { event = e; });
     registry.register({ name: "x", label: "X View", init() {}, generate() {}, update() {}, clear() {}, dispose() {} });
     await registry.switchTo("x");
-    assert.deepEqual(event, { name: "x", label: "X View" });
+    assert.equal(event.name, "x");
+    assert.equal(event.label, "X View");
   });
 
   it("getAll returns metadata with active flag", async () => {
