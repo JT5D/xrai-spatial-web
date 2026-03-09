@@ -21,6 +21,16 @@
 
 ## Log
 
+### 2026-03-09 — BUG-FIX — Server-Side AI Failover for WebSocket Agent
+**Agent:** claude-code  **Confidence:** high
+**Impact:** bug-fix, architecture
+**Files:** `src/server/agent/failover-client.mjs`, `src/server/index.mjs`
+
+Server-side Jarvis (WebSocket at `/agent/ws`) was using a single Groq client with no failover. When Groq hit 429 rate limits, the agent simply returned errors. Created a failover wrapper (`failover-client.mjs`) with the same `stream()` interface that automatically retries with the next provider: Groq → Gemini → Ollama → Claude. 60s cooldowns for rate-limited providers, 10s for transient errors.
+
+**Root Cause:** `index.mjs` selected one AI client at startup and passed it to `createJarvis()`. The daemon had 3-tier failover but the server did not.
+**Lesson:** Any AI client that faces the internet needs failover, not just background daemons. Wrap multiple clients in a failover proxy that implements the same streaming interface — consumers don't need to know about provider switching.
+
 ### 2026-03-09 — UNLOCK — Jarvis Daemon v2 with Tool Execution
 **Agent:** claude-code  **Confidence:** high
 **Impact:** unlock
