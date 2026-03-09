@@ -1,0 +1,24 @@
+{
+  "name": "@xrai/voice-agent",
+  "version": "1.0.0",
+  "description": "Standalone voice agent with wake word detection, multi-provider TTS, and AI bridge",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./event-bus": "./event-bus.mjs",
+    "./voice-input": "./voice-input.mjs",
+    "./voice-output": "./voice-output.mjs",
+    "./agent-bridge": "./agent-bridge.mjs",
+    "./agent-overlay": "./agent-overlay.mjs",
+    "./tts/*": "./tts/*.mjs"
+  },
+  "files": [
+    "*.mjs",
+    "tts/*.mjs"
+  ],
+  "keywords": ["voice", "agent", "tts", "stt", "wake-word", "jarvis", "xrai"],
+  "license": "MIT",
+  "dependencies": {},
+  "peerDependencies": {}
+}
