@@ -21,6 +21,17 @@
 
 ## Log
 
+### 2026-03-09 — UNLOCK — Comprehensive E2E Test Suite + Agent Documentation
+**Agent:** claude-code  **Confidence:** high
+**Impact:** unlock, architecture
+**Files:** `e2e/*.spec.mjs`, `playwright.config.mjs`, `docs/AGENT.md`, `docs/SKILLS.md`, `docs/SPATIAL-AI-MODULES.md`, `CLAUDE.md`
+
+Built complete Playwright E2E test infrastructure: 35 tests across health, scraper UI, spatial viewer, dashboard, WebSocket agent, and multiplayer (including 10-user stress test). Cross-browser: Chromium + WebKit both at 70/70 pass. Mobile viewport matrix configured (iPhone 15, iPad Pro, Pixel 7). Screenshot capture at visual milestones with timestamps per-browser.
+
+Created comprehensive agent system documentation: AGENT.md (full replication spec), SKILLS.md (tools reference), SPATIAL-AI-MODULES.md (hot-swappable provider architecture with performance budgets and thermal throttling data). Updated CLAUDE.md with enforcement levels and personality directives.
+
+**Lesson:** Headless Chromium cannot initialize WebGL — Three.js `initHUD()` blocks event listener registration, making button-click tests fail. Solution: test the extract API directly for data flow, test DOM structure separately for UI. Spatial interaction tests need headed browser mode or WebGL stubbing.
+
 ### 2026-03-09 — BUG-FIX — Server-Side AI Failover for WebSocket Agent
 **Agent:** claude-code  **Confidence:** high
 **Impact:** bug-fix, architecture
