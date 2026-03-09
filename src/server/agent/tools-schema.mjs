@@ -122,4 +122,66 @@ export const HUD_TOOLS = [
       },
     },
   },
+  {
+    name: "switch_view",
+    description:
+      "Switch to a different visualization mode. Available modes: force-graph (default spatial graph), media-city (exploded media view with photos/videos as landmarks), newspaper (hierarchical section-based layout).",
+    input_schema: {
+      type: "object",
+      properties: {
+        view: {
+          type: "string",
+          description: "View mode name: force-graph, media-city, or newspaper",
+        },
+      },
+      required: ["view"],
+    },
+  },
+  {
+    name: "list_views",
+    description:
+      "List all available visualization modes and which one is currently active.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "filter_nodes",
+    description:
+      "Apply a faceted filter to narrow down visible nodes. Filters compose — multiple filters show only nodes matching ALL criteria.",
+    input_schema: {
+      type: "object",
+      properties: {
+        facet: {
+          type: "string",
+          description: "Facet to filter on: type, ring, mediaKind, author, section",
+        },
+        values: {
+          type: "array",
+          items: { type: "string" },
+          description: "Values to include (e.g. [\"heading\", \"media\"] for type facet)",
+        },
+      },
+      required: ["facet", "values"],
+    },
+  },
+  {
+    name: "clear_filters",
+    description:
+      "Remove all active filters, showing all nodes again.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "get_facets",
+    description:
+      "Get available filter facets and their possible values for the current graph. Use to discover what filters are available.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
 ];

@@ -25,5 +25,10 @@ describe("tools-schema", () => {
     assert.ok(names.includes("extract_deeper"));
     assert.ok(names.includes("reset_view"));
     assert.ok(names.includes("list_nodes"));
+    assert.ok(names.includes("switch_view"));
+    assert.ok(names.includes("list_views"));
+    assert.ok(names.includes("filter_nodes"));
+    assert.ok(names.includes("clear_filters"));
+    assert.ok(names.includes("get_facets"));
   });
 });

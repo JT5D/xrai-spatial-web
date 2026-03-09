@@ -3,6 +3,8 @@
  */
 export function createAgentTools(hud, hooks, graphModule, nodesModule) {
   const handlers = new Map();
+  let _viewRegistry = null;
+  let _filterEngine = null;
 
   // Navigate to a node by label search
   handlers.set("navigate_to_node", async ({ query }) => {
@@ -142,6 +144,57 @@ export function createAgentTools(hud, hooks, graphModule, nodesModule) {
     };
   });
 
+  // Switch view mode
+  handlers.set("switch_view", async ({ view }) => {
+    if (!_viewRegistry) return { error: "View registry not available" };
+    const views = _viewRegistry.list();
+    if (!views.includes(view)) {
+      return { error: `Unknown view: ${view}. Available: ${views.join(", ")}` };
+    }
+    hooks.emit("view:switch-request", { name: view });
+    return { switched: true, view };
+  });
+
+  // List available views
+  handlers.set("list_views", async () => {
+    if (!_viewRegistry) return { error: "View registry not available" };
+    const all = _viewRegistry.getAll();
+    return {
+      views: all.map((v) => ({ name: v.name, label: v.label, active: v.active })),
+      current: _viewRegistry.current(),
+    };
+  });
+
+  // Filter nodes by facet
+  handlers.set("filter_nodes", async ({ facet, values }) => {
+    if (!_filterEngine) return { error: "Filter engine not available" };
+    _filterEngine.setFilter(facet, values);
+    const result = _filterEngine.apply();
+    return { filtered: true, facet, values, nodeCount: result.nodes.length, linkCount: result.links.length };
+  });
+
+  // Clear all filters
+  handlers.set("clear_filters", async () => {
+    if (!_filterEngine) return { error: "Filter engine not available" };
+    _filterEngine.clearFilters();
+    return { cleared: true };
+  });
+
+  // Get available facets
+  handlers.set("get_facets", async () => {
+    if (!_filterEngine) return { error: "Filter engine not available" };
+    const facets = _filterEngine.getFacets();
+    return {
+      facets: facets.map((f) => ({
+        name: f.name,
+        label: f.label || f.name,
+        type: f.type || "discrete",
+        values: f.values?.slice(0, 20),
+      })),
+      activeFilters: _filterEngine.getActiveFilters(),
+    };
+  });
+
   async function execute(toolName, input) {
     const handler = handlers.get(toolName);
     if (!handler) return { error: `Unknown tool: ${toolName}` };
@@ -152,5 +205,8 @@ export function createAgentTools(hud, hooks, graphModule, nodesModule) {
     }
   }
 
-  return { execute };
+  function setViewRegistry(vr) { _viewRegistry = vr; }
+  function setFilterEngine(fe) { _filterEngine = fe; }
+
+  return { execute, setViewRegistry, setFilterEngine };
 }

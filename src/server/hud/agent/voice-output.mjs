@@ -1,81 +1,62 @@
 /**
- * Voice output — SpeechSynthesis TTS with voice selection and interruption.
+ * Voice output — provider-based TTS with automatic fallback.
+ * Default: Edge TTS (natural neural voice via server proxy).
+ * Fallback: Web Speech API (robotic, works offline).
  */
+import { createEdgeTTSProvider } from "./tts/provider-edge-tts.mjs";
+import { createWebSpeechProvider } from "./tts/provider-web-speech.mjs";
+import { TTS_PROVIDER } from "./tts/provider-interface.mjs";
+
 export function createVoiceOutput(hooks) {
-  if (typeof window === "undefined" || !window.speechSynthesis) {
-    return {
-      speak() {},
-      stop() {},
-      isSpeaking: () => false,
-      dispose() {},
-    };
+  if (typeof window === "undefined") {
+    return { speak() {}, stop() {}, isSpeaking: () => false, setProvider() {}, getProvider: () => null, dispose() {} };
   }
 
-  const synth = window.speechSynthesis;
-  let selectedVoice = null;
+  const providers = new Map();
+  let active = null;
 
-  // Select a preferred voice once voices load
-  function selectVoice() {
-    const voices = synth.getVoices();
-    if (voices.length === 0) return;
+  // Initialize available providers
+  const edge = createEdgeTTSProvider(hooks);
+  if (edge) providers.set(TTS_PROVIDER.EDGE, edge);
 
-    // Preference order: Samantha (macOS), Google UK English, any English
-    const prefs = ["samantha", "google uk english", "karen", "daniel"];
-    for (const pref of prefs) {
-      const match = voices.find((v) =>
-        v.name.toLowerCase().includes(pref)
-      );
-      if (match) {
-        selectedVoice = match;
-        return;
-      }
+  const webSpeech = createWebSpeechProvider(hooks);
+  if (webSpeech) providers.set(TTS_PROVIDER.WEB_SPEECH, webSpeech);
+
+  // Listen for Edge TTS failures — auto-fallback to web-speech
+  hooks.on("agent:tts-error", ({ provider }) => {
+    if (provider === "edge-tts" && providers.has(TTS_PROVIDER.WEB_SPEECH)) {
+      console.warn("[voice-output] Edge TTS failed, falling back to Web Speech API");
+      active = providers.get(TTS_PROVIDER.WEB_SPEECH);
     }
-    // Fallback: first English voice
-    selectedVoice =
-      voices.find((v) => v.lang.startsWith("en")) || voices[0];
-  }
+  });
 
-  // Voices may load async
-  if (synth.getVoices().length > 0) {
-    selectVoice();
-  } else {
-    synth.addEventListener("voiceschanged", selectVoice, { once: true });
-  }
+  // Default to Edge TTS, fallback to Web Speech
+  active = providers.get(TTS_PROVIDER.EDGE) || providers.get(TTS_PROVIDER.WEB_SPEECH) || null;
 
   function speak(text) {
-    if (!text?.trim()) return;
-
-    // Cancel current speech (interruption)
-    synth.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    if (selectedVoice) utterance.voice = selectedVoice;
-    utterance.rate = 1.05;
-    utterance.pitch = 1.0;
-
-    utterance.onstart = () => hooks.emit("agent:speaking", true);
-    utterance.onend = () => {
-      hooks.emit("agent:speaking", false);
-      hooks.emit("agent:spoken");
-    };
-    utterance.onerror = () => hooks.emit("agent:speaking", false);
-
-    synth.speak(utterance);
+    if (!active || !text?.trim()) return;
+    active.speak(text);
   }
 
   function stop() {
-    synth.cancel();
-    hooks.emit("agent:speaking", false);
+    if (active) active.stop();
+  }
+
+  function setProvider(name) {
+    const p = providers.get(name);
+    if (p) {
+      if (active) active.stop();
+      active = p;
+    }
+  }
+
+  function getProvider() {
+    return active?.name || null;
   }
 
   function dispose() {
-    stop();
+    for (const p of providers.values()) p.dispose();
   }
 
-  return {
-    speak,
-    stop,
-    isSpeaking: () => synth.speaking,
-    dispose,
-  };
+  return { speak, stop, isSpeaking: () => active?.isSpeaking() || false, setProvider, getProvider, dispose };
 }

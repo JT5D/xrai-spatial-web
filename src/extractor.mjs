@@ -169,6 +169,11 @@ function extractLinks($, baseUrl) {
   return { internal: internal.slice(0, 50), external, feeds };
 }
 
+function youtubeThumb(src) {
+  const m = src.match(/(?:embed\/|v=|youtu\.be\/)([\w-]{11})/);
+  return m ? `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg` : null;
+}
+
 function extractMedia($, baseUrl) {
   const ogImage = $('meta[property="og:image"]').attr("content");
   const images = [];
@@ -202,11 +207,14 @@ function extractMedia($, baseUrl) {
   $("iframe[src]").each((_, el) => {
     const src = $(el).attr("src") || "";
     if (src.includes("youtube") || src.includes("youtu.be") || src.includes("vimeo")) {
-      videos.push({ src, type: src.includes("vimeo") ? "vimeo" : "youtube" });
+      const isVimeo = src.includes("vimeo");
+      const thumb = isVimeo ? null : youtubeThumb(src);
+      videos.push({ src, type: isVimeo ? "vimeo" : "youtube", thumbnail: thumb });
     }
   });
   $("video[src], video source[src]").each((_, el) => {
-    videos.push({ src: $(el).attr("src"), type: "video" });
+    const poster = $(el).closest("video").attr("poster") || null;
+    videos.push({ src: $(el).attr("src"), type: "video", thumbnail: poster });
   });
 
   return {
@@ -216,17 +224,102 @@ function extractMedia($, baseUrl) {
   };
 }
 
+function extractCodeBlocks($) {
+  const blocks = [];
+  $("pre code, code[class*='language-'], .highlight pre").each((_, el) => {
+    const text = $(el).text().trim();
+    if (text.length < 10 || text.length > 2000) return;
+    const classAttr = $(el).attr("class") || "";
+    const langMatch = classAttr.match(/language-(\w+)/);
+    blocks.push({
+      code: text.slice(0, 500),
+      language: langMatch?.[1] || null,
+    });
+  });
+  return blocks.slice(0, 8);
+}
+
+function extractBlockquotes($) {
+  const quotes = [];
+  $("blockquote").each((_, el) => {
+    const text = $(el).text().trim();
+    if (text.length < 10 || text.length > 500) return;
+    const cite = $(el).find("cite, footer").text().trim() || null;
+    quotes.push({ text: text.replace(cite || "", "").trim(), cite });
+  });
+  return quotes.slice(0, 6);
+}
+
+function extractTables($) {
+  const tables = [];
+  $("table").each((_, el) => {
+    const headers = [];
+    $(el).find("thead th, tr:first-child th").each((_, th) => {
+      headers.push($(th).text().trim());
+    });
+    const rows = [];
+    $(el).find("tbody tr, tr").slice(headers.length ? 0 : 1).each((_, tr) => {
+      const cells = [];
+      $(tr).find("td, th").each((_, td) => {
+        cells.push($(td).text().trim());
+      });
+      if (cells.length > 0) rows.push(cells);
+    });
+    if (rows.length > 0) {
+      tables.push({ headers, rows: rows.slice(0, 20), rowCount: rows.length });
+    }
+  });
+  return tables.slice(0, 4);
+}
+
+function extractAudio($, baseUrl) {
+  const items = [];
+  $("audio[src], audio source[src]").each((_, el) => {
+    try {
+      const src = new URL($(el).attr("src"), baseUrl).href;
+      items.push({ src, type: $(el).attr("type") || "audio" });
+    } catch { /* skip */ }
+  });
+  // Podcast embeds (Spotify, Apple Podcasts)
+  $("iframe[src]").each((_, el) => {
+    const src = $(el).attr("src") || "";
+    if (src.includes("spotify.com/embed") || src.includes("podcasts.apple.com")) {
+      items.push({ src, type: src.includes("spotify") ? "spotify" : "apple-podcast" });
+    }
+  });
+  return items.slice(0, 6);
+}
+
+function extractLede($) {
+  const content = $("main, article, [role='main'], body").first();
+  const first = content.find("p").first().text().trim();
+  return first && first.length > 20 ? first.slice(0, 300) : null;
+}
+
+function estimateReadingTime($) {
+  const content = $("main, article, [role='main'], body").first();
+  const text = content.text();
+  const words = text.split(/\s+/).filter(Boolean).length;
+  return Math.max(1, Math.ceil(words / 250));
+}
+
 function deriveMeta(og, jsonLd, meta) {
   const article = jsonLd.find((d) =>
     ["Article", "NewsArticle", "BlogPosting", "WebPage", "Product", "Review"].includes(d["@type"])
   );
 
   const authorRaw = article?.author;
+  const authorObj = Array.isArray(authorRaw) ? authorRaw[0] : authorRaw;
   let author =
     (typeof authorRaw === "string" ? authorRaw : null) ||
-    authorRaw?.name ||
-    (Array.isArray(authorRaw) ? authorRaw[0]?.name : null) ||
+    authorObj?.name ||
     meta.author;
+
+  // Author avatar from JSON-LD Person
+  let authorAvatar = null;
+  if (typeof authorObj === "object") {
+    authorAvatar = authorObj?.image?.url || authorObj?.image || null;
+  }
 
   const ldKeywords = article?.keywords;
   const ldTags = ldKeywords
@@ -241,6 +334,7 @@ function deriveMeta(og, jsonLd, meta) {
 
   return {
     author: author || null,
+    authorAvatar,
     datePublished: article?.datePublished || og?.["article:published_time"] || null,
     dateModified: article?.dateModified || og?.["article:modified_time"] || null,
     section: article?.articleSection || og?.["article:section"] || null,
@@ -291,6 +385,12 @@ function buildGraph(data) {
     type: "page",
     label: data.title,
     ring: 0,
+    val: 5,
+    section: data.section || null,
+    author: data.author || null,
+    imageUrl: data.media?.heroImage?.src || null,
+    url: data.url,
+    text: data.description || "",
     data: {
       title: data.title,
       description: data.description,
@@ -298,6 +398,9 @@ function buildGraph(data) {
       url: data.url,
       siteName: data.siteName,
       pageType: data.pageType,
+      lede: data.lede || null,
+      readingTimeMin: data.readingTimeMin || null,
+      authorAvatar: data.authorAvatar || null,
     },
   });
 
@@ -346,7 +449,11 @@ function buildGraph(data) {
           id,
           type: "heading",
           label: h.text,
-          ring: 2,
+          ring: parentId === "page" ? 0 : 2,
+          val: Math.max(1, 5 - h.level),
+          text: h.text,
+          section: data.section || null,
+          author: data.author || null,
           data: { level: h.level, childCount: h.children.length },
         })
       ) {
@@ -361,16 +468,92 @@ function buildGraph(data) {
   }
   addHeadings(data.headings || [], "page");
 
-  // 6. Media (ring 2, max 8)
-  const mediaItems = [...(data.media?.images || []).filter((i) => !i.isHero)].slice(0, 8);
-  for (const [i, item] of mediaItems.entries()) {
-    const id = `media:${i}`;
-    if (addNode({ id, type: "media", label: item.alt || `Image ${i + 1}`, ring: 2, data: item })) {
+  // 6. Images (ring 2, max 12)
+  const imageItems = (data.media?.images || []).filter((i) => !i.isHero).slice(0, 12);
+  for (const [i, item] of imageItems.entries()) {
+    const id = `img:${i}`;
+    if (addNode({
+      id, type: "media", label: item.alt || `Image ${i + 1}`, ring: 2,
+      val: item.isHero ? 4 : 2,
+      mediaKind: "image",
+      imageUrl: item.src,
+      data: item,
+    })) {
       links.push({ source: "page", target: id, type: "contains" });
     }
   }
 
-  // 7. External link groups (ring 3, max 20)
+  // 6b. Videos (ring 2, max 6)
+  const videoItems = (data.media?.videos || []).slice(0, 6);
+  for (const [i, item] of videoItems.entries()) {
+    const id = `vid:${i}`;
+    if (addNode({
+      id, type: "media", label: `Video: ${item.type}`, ring: 2,
+      val: 3,
+      mediaKind: "video",
+      videoUrl: item.src,
+      data: item,
+    })) {
+      links.push({ source: "page", target: id, type: "contains" });
+    }
+  }
+
+  // 7. Code blocks (ring 2)
+  for (const [i, block] of (data.codeBlocks || []).entries()) {
+    const id = `code:${i}`;
+    if (addNode({
+      id, type: "media", label: `Code${block.language ? ` (${block.language})` : ""}`,
+      ring: 2, val: 2,
+      mediaKind: "code",
+      code: block.code,
+      data: block,
+    })) {
+      links.push({ source: "page", target: id, type: "contains" });
+    }
+  }
+
+  // 7b. Blockquotes (ring 2, max 4)
+  for (const [i, quote] of (data.blockquotes || []).slice(0, 4).entries()) {
+    const id = `quote:${i}`;
+    if (addNode({
+      id, type: "media", label: quote.text.slice(0, 60), ring: 2, val: 2,
+      mediaKind: "quote",
+      text: quote.text,
+      data: quote,
+    })) {
+      links.push({ source: "page", target: id, type: "contains" });
+    }
+  }
+
+  // 7c. Tables (ring 2, max 3)
+  for (const [i, table] of (data.tables || []).slice(0, 3).entries()) {
+    const id = `table:${i}`;
+    const label = table.headers.length > 0
+      ? `Table: ${table.headers.slice(0, 3).join(", ")}`
+      : `Table (${table.rowCount} rows)`;
+    if (addNode({
+      id, type: "media", label, ring: 2, val: 2,
+      mediaKind: "table",
+      data: table,
+    })) {
+      links.push({ source: "page", target: id, type: "contains" });
+    }
+  }
+
+  // 7d. Audio (ring 2, max 4)
+  for (const [i, item] of (data.audio || []).slice(0, 4).entries()) {
+    const id = `audio:${i}`;
+    if (addNode({
+      id, type: "media", label: `Audio: ${item.type}`, ring: 2, val: 2,
+      mediaKind: "audio",
+      audioUrl: item.src,
+      data: item,
+    })) {
+      links.push({ source: "page", target: id, type: "contains" });
+    }
+  }
+
+  // 8. External link groups (ring 3, max 20)
   const extDomains = Object.entries(data.links?.external || {})
     .sort((a, b) => b[1].length - a[1].length)
     .slice(0, 20);
@@ -395,6 +578,9 @@ function buildGraph(data) {
 
 // --- Main export ---
 
+/** @internal — exported for testing */
+export { buildGraph as _buildGraph };
+
 export async function extract(url) {
   const res = await fetch(url, { headers: { "User-Agent": UA } });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
@@ -410,6 +596,12 @@ export async function extract(url) {
   const pageLinks = extractLinks($, url);
   const media = extractMedia($, url);
   const derived = deriveMeta(og, jsonLd, meta);
+  const codeBlocks = extractCodeBlocks($);
+  const blockquotes = extractBlockquotes($);
+  const tables = extractTables($);
+  const audio = extractAudio($, url);
+  const lede = extractLede($);
+  const readingTimeMin = estimateReadingTime($);
   const markdown = extractMarkdown($);
 
   const result = {
@@ -422,6 +614,12 @@ export async function extract(url) {
     breadcrumbs,
     links: pageLinks,
     media,
+    codeBlocks,
+    blockquotes,
+    tables,
+    audio,
+    lede,
+    readingTimeMin,
     markdown,
   };
   result.graph = buildGraph(result);

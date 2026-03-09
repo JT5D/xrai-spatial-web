@@ -11,6 +11,9 @@ import { saveOutput } from "../output.mjs";
 import { createClaudeClient } from "./agent/claude-client.mjs";
 import { createJarvis } from "./agent/jarvis.mjs";
 import { createAgentWS } from "./agent/agent-ws.mjs";
+import { speak as edgeTTSSpeak, listVoices as edgeTTSVoices } from "./agent/edge-tts-proxy.mjs";
+import { createRoomManager } from "./multiplayer/room-manager.mjs";
+import { createPresenceWS } from "./multiplayer/presence-ws.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -119,6 +122,47 @@ export function startServer(options = {}) {
       return;
     }
 
+    // Edge TTS endpoint — synthesize text to MP3 audio
+    if (req.method === "POST" && url.pathname === "/agent/tts") {
+      try {
+        let body = "";
+        for await (const chunk of req) body += chunk;
+        const { text, voice } = JSON.parse(body);
+
+        if (!text?.trim()) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "text is required" }));
+          return;
+        }
+
+        const audioBuffer = await edgeTTSSpeak(text, { voice });
+        res.writeHead(200, {
+          "Content-Type": "audio/mpeg",
+          "Content-Length": audioBuffer.length,
+          "Cache-Control": "no-cache",
+        });
+        res.end(audioBuffer);
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
+    // TTS voices list
+    if (req.method === "GET" && url.pathname === "/agent/tts/voices") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(edgeTTSVoices()));
+      return;
+    }
+
+    // Multiplayer rooms list
+    if (req.method === "GET" && url.pathname === "/rooms") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(roomManager.listRooms()));
+      return;
+    }
+
     // Serve HUD static files from src/server/hud/
     if (req.method === "GET" && url.pathname.startsWith("/hud/")) {
       const rel = url.pathname.slice(5); // strip "/hud/"
@@ -150,12 +194,18 @@ export function startServer(options = {}) {
   const jarvis = createJarvis(claudeClient);
   createAgentWS(server, jarvis);
 
+  // Initialize multiplayer rooms
+  const roomManager = createRoomManager();
+  createPresenceWS(server, roomManager);
+
   server.listen(port, "0.0.0.0", () => {
     const ips = getLocalIPs();
     console.log("\nWeb Scraper running:");
     console.log(`  Scraper: http://localhost:${port}`);
     console.log(`  Spatial: http://localhost:${port}/spatial`);
     console.log(`  Jarvis:  ${claudeClient.isReady() ? "ready" : "set ANTHROPIC_API_KEY to enable"}`);
+    console.log(`  TTS:     Edge TTS (neural voice, no API key)`);
+    console.log(`  Rooms:   ws://localhost:${port}/rooms (multiplayer)`);
     ips.forEach((ip) => {
       console.log(`  Network: http://${ip}:${port}`);
     });

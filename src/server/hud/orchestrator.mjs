@@ -23,6 +23,11 @@ import { createAgentTools } from "./agent/agent-tools.mjs";
 import { createAgentBridge } from "./agent/agent-bridge.mjs";
 import { createQRSharing } from "./sharing/qr-code.mjs";
 import { createWebcamGesture } from "./interaction/webcam-gesture.mjs";
+import { createViewRegistry } from "./views/view-registry.mjs";
+import { createForceGraphView } from "./views/layouts/force-graph.mjs";
+import { createMediaCityView } from "./views/layouts/media-city.mjs";
+import { createNewspaperView } from "./views/layouts/newspaper.mjs";
+import { createFilterEngine } from "./filters/filter-engine.mjs";
 
 export async function initHUD(container, options = {}) {
   const hooks = createHooks();
@@ -82,19 +87,67 @@ export async function initHUD(container, options = {}) {
     else if (action === "select") hooks.emit("focus:select", { nodeId: null });
   });
 
-  // 7. Wire graph → visuals
-  hooks.on("graph:loaded", ({ nodes: graphNodes, links }) => {
-    nodes.build(graphNodes);
-    connectors.build(links);
-    labels.build(graphNodes);
+  // 7. View registry — pluggable layout modes
+  const viewRegistry = createViewRegistry(hooks);
+  viewRegistry.setContext({ scene: engine.scene, camera: engine.camera, hooks, engine });
+  viewRegistry.register(createForceGraphView());
+  viewRegistry.register(createMediaCityView());
+  viewRegistry.register(createNewspaperView());
+
+  // 8. Filter engine — composable faceted filtering
+  const filterEngine = createFilterEngine(hooks);
+
+  // 8b. Wire view registry + filter engine into agent tools
+  agentTools.setViewRegistry(viewRegistry);
+  agentTools.setFilterEngine(filterEngine);
+
+  // 9. Handle view switch requests from agent tools
+  hooks.on("view:switch-request", async ({ name }) => {
+    if (!currentGraphData) return;
+    const filtered = filterEngine.apply(currentGraphData);
+    await viewRegistry.switchTo(name, filtered);
+  });
+
+  // 10. Wire graph → view registry (replaces direct nodes/connectors/labels wiring)
+  let currentGraphData = null;
+  hooks.on("graph:loaded", async ({ nodes: graphNodes, links }) => {
+    currentGraphData = { nodes: graphNodes, links };
+    filterEngine.setData(currentGraphData);
+
+    // Apply any active filters
+    const filtered = filterEngine.apply(currentGraphData);
+
+    // Route to active view (default: force-graph)
+    if (!viewRegistry.current()) {
+      await viewRegistry.switchTo("force-graph", filtered);
+    } else {
+      await viewRegistry.switchTo(viewRegistry.current(), filtered);
+    }
     cameraAnimator.saveHome();
   });
 
-  // 8. Per-frame updates
+  // Re-render when filters change
+  hooks.on("filter:changed", async () => {
+    if (!currentGraphData) return;
+    const filtered = filterEngine.apply(currentGraphData);
+    const currentView = viewRegistry.current();
+    if (currentView) {
+      await viewRegistry.switchTo(currentView, filtered);
+    }
+  });
+
+  hooks.on("filter:cleared", async () => {
+    if (!currentGraphData) return;
+    const currentView = viewRegistry.current();
+    if (currentView) {
+      await viewRegistry.switchTo(currentView, currentGraphData);
+    }
+  });
+
+  // 10. Per-frame updates (delegates to active view)
   engine.addUpdate((delta, elapsed) => {
-    nodes.update(delta, elapsed);
-    connectors.update();
-    labels.update(delta, elapsed);
+    viewRegistry.update(delta, elapsed);
+    // Legacy modules still needed for force-graph compatibility
     reticle.update(delta, elapsed);
     gaze.update();
     cameraAnimator.update();
@@ -105,6 +158,23 @@ export async function initHUD(container, options = {}) {
   const hud = {
     load(graphData) {
       graph.load(graphData);
+    },
+    /** Switch to a different view mode */
+    async switchView(viewName) {
+      if (!currentGraphData) return;
+      const filtered = filterEngine.apply(currentGraphData);
+      await viewRegistry.switchTo(viewName, filtered);
+    },
+    /** Get available view modes */
+    getViews() { return viewRegistry.getAll(); },
+    /** Filter API */
+    filter: {
+      set(facet, value) { filterEngine.setFilter(facet, value); },
+      clear() { filterEngine.clearFilters(); },
+      getFacets() { return filterEngine.getFacets(); },
+      savePreset(name) { filterEngine.savePreset(name); },
+      loadPreset(name) { return filterEngine.loadPreset(name); },
+      addFacet(name, config) { filterEngine.addFacet(name, config); },
     },
     setTheme(overrides) {
       const updated = mergeTheme(overrides);
@@ -137,6 +207,7 @@ export async function initHUD(container, options = {}) {
       agentOverlay.dispose();
       qrSharing.dispose();
       webcamGesture.dispose();
+      viewRegistry.dispose();
       graph.dispose();
       nodes.clear();
       connectors.clear();
