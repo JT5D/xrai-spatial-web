@@ -12,8 +12,11 @@ import { createClaudeClient } from "./agent/claude-client.mjs";
 import { createJarvis } from "./agent/jarvis.mjs";
 import { createAgentWS } from "./agent/agent-ws.mjs";
 import { speak as edgeTTSSpeak, listVoices as edgeTTSVoices } from "./agent/edge-tts-proxy.mjs";
+import { speak as elevenSpeak, listVoices as elevenVoices, isConfigured as elevenConfigured } from "./agent/elevenlabs-proxy.mjs";
 import { createRoomManager } from "./multiplayer/room-manager.mjs";
 import { createPresenceWS } from "./multiplayer/presence-ws.mjs";
+import { createAgentRegistry } from "./agent/agent-registry.mjs";
+import { getDashboardHtml } from "./dashboard-ui.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -91,6 +94,13 @@ export function startServer(options = {}) {
       return;
     }
 
+    // Agent Dashboard
+    if (req.method === "GET" && url.pathname === "/dashboard") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(getDashboardHtml());
+      return;
+    }
+
     // Extract endpoint (enriched metadata + concept graph)
     if (req.method === "POST" && url.pathname === "/extract") {
       try {
@@ -156,6 +166,105 @@ export function startServer(options = {}) {
       return;
     }
 
+    // ElevenLabs TTS synthesis (premium)
+    if (req.method === "POST" && url.pathname === "/agent/tts/elevenlabs") {
+      if (!elevenConfigured()) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "ELEVENLABS_API_KEY not set" }));
+        return;
+      }
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", async () => {
+        try {
+          const { text, voice } = JSON.parse(body);
+          const audio = await elevenSpeak(text, { voice });
+          res.writeHead(200, { "Content-Type": "audio/mpeg", "Content-Length": audio.length });
+          res.end(audio);
+        } catch (err) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // ElevenLabs voices list
+    if (req.method === "GET" && url.pathname === "/agent/tts/elevenlabs/voices") {
+      if (!elevenConfigured()) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "not configured" }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(elevenVoices()));
+      return;
+    }
+
+    // Agent dashboard — list all agents
+    if (req.method === "GET" && url.pathname === "/agent/dashboard") {
+      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify({ agents: agentRegistry.getAll(), ts: Date.now() }));
+      return;
+    }
+
+    // Agent dashboard — register a new agent
+    if (req.method === "POST" && url.pathname === "/agent/dashboard/register") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        try {
+          const opts = JSON.parse(body);
+          const id = agentRegistry.register(opts);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ id, agent: agentRegistry.get(id) }));
+        } catch (err) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // Agent dashboard — update an agent
+    if (req.method === "POST" && url.pathname === "/agent/dashboard/update") {
+      let body = "";
+      req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => {
+        try {
+          const { id, ...updates } = JSON.parse(body);
+          agentRegistry.update(id, updates);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true }));
+        } catch (err) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // Agent dashboard — SSE stream for real-time updates
+    if (req.method === "GET" && url.pathname === "/agent/dashboard/stream") {
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+      });
+
+      // Send current state
+      res.write(`data: ${JSON.stringify({ type: "snapshot", agents: agentRegistry.getAll() })}\n\n`);
+
+      // Subscribe to updates
+      const unsub = agentRegistry.subscribe((json) => {
+        res.write(`data: ${json}\n\n`);
+      });
+
+      req.on("close", unsub);
+      return;
+    }
+
     // Multiplayer rooms list
     if (req.method === "GET" && url.pathname === "/rooms") {
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -196,6 +305,18 @@ export function startServer(options = {}) {
 
   // Initialize multiplayer rooms
   const roomManager = createRoomManager();
+  const agentRegistry = createAgentRegistry();
+
+  // Register Jarvis as the first agent
+  const jarvisAgentId = agentRegistry.register({
+    name: "Jarvis",
+    type: "voice",
+    meta: { model: claudeClient.isReady() ? "claude-sonnet-4" : "not configured" },
+  });
+  agentRegistry.update(jarvisAgentId, {
+    status: claudeClient.isReady() ? "idle" : "blocked",
+    currentTask: claudeClient.isReady() ? "Awaiting commands" : "Needs ANTHROPIC_API_KEY",
+  });
   createPresenceWS(server, roomManager);
 
   server.listen(port, "0.0.0.0", () => {
@@ -204,7 +325,11 @@ export function startServer(options = {}) {
     console.log(`  Scraper: http://localhost:${port}`);
     console.log(`  Spatial: http://localhost:${port}/spatial`);
     console.log(`  Jarvis:  ${claudeClient.isReady() ? "ready" : "set ANTHROPIC_API_KEY to enable"}`);
-    console.log(`  TTS:     Edge TTS (neural voice, no API key)`);
+    const ttsInfo = elevenConfigured()
+      ? "ElevenLabs (premium) + Edge TTS (fallback)"
+      : "Edge TTS (neural voice, no API key)";
+    console.log(`  TTS:     ${ttsInfo}`);
+    console.log(`  Dash:    http://localhost:${port}/dashboard (agent monitor)`);
     console.log(`  Rooms:   ws://localhost:${port}/rooms (multiplayer)`);
     ips.forEach((ip) => {
       console.log(`  Network: http://${ip}:${port}`);

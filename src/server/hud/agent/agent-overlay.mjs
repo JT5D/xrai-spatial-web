@@ -74,9 +74,18 @@ export function createAgentOverlay(container, hooks) {
       border-color: ${a.micActiveColor || "#4dd0e1"};
       animation: mic-pulse 1.5s ease-in-out infinite;
     }
+    .hud-agent-mic.passive {
+      color: rgba(255,255,255,0.15);
+      border-color: rgba(255,255,255,0.08);
+      animation: mic-breathe 3s ease-in-out infinite;
+    }
     .hud-agent-mic.disabled {
       opacity: 0.3;
       cursor: default;
+    }
+    @keyframes mic-breathe {
+      0%, 100% { opacity: 0.5; }
+      50% { opacity: 0.8; }
     }
     @keyframes mic-pulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(77,208,225,0.3); }
@@ -160,6 +169,19 @@ export function createAgentOverlay(container, hooks) {
   // Update mic button state
   hooks.on("agent:listening", (active) => {
     micBtn.classList.toggle("listening", active);
+    micBtn.classList.remove("passive");
+  });
+
+  // Passive (wake word) mode indicator
+  hooks.on("agent:passive", (active) => {
+    micBtn.classList.toggle("passive", active);
+    micBtn.classList.remove("listening");
+    if (active) micBtn.title = 'Say "Hey Jarvis" or click to talk';
+  });
+
+  // Wake word detected — brief flash
+  hooks.on("agent:woke", () => {
+    showTranscript("Listening...", "rgba(77,208,225,0.8)");
   });
 
   // Show interim transcript

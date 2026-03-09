@@ -7,9 +7,10 @@
  * dispose(): void             — cleanup
  */
 export const TTS_PROVIDER = {
+  ELEVENLABS: "elevenlabs",
   EDGE: "edge-tts",
   WEB_SPEECH: "web-speech",
 };
 
-/** Default provider preference order */
-export const PROVIDER_PRIORITY = [TTS_PROVIDER.EDGE, TTS_PROVIDER.WEB_SPEECH];
+/** Default provider preference order (best first) */
+export const PROVIDER_PRIORITY = [TTS_PROVIDER.ELEVENLABS, TTS_PROVIDER.EDGE, TTS_PROVIDER.WEB_SPEECH];

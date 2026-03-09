@@ -76,7 +76,10 @@ export async function initHUD(container, options = {}) {
   const agentTools = createAgentTools(null, hooks, graph, nodes); // hud ref set below
   const agentBridge = createAgentBridge(null, hooks, agentTools, voiceInput, voiceOutput);
 
-  // 6b. QR sharing + webcam gesture (optional)
+  // 6b. Auto-start passive listening (wake word: "Hey Jarvis")
+  voiceInput.startPassive();
+
+  // 6c. QR sharing + webcam gesture (optional)
   const qrSharing = createQRSharing(container, hooks);
   const webcamGesture = createWebcamGesture(hooks);
 
