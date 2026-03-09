@@ -12,7 +12,7 @@ const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 export function createGeminiClient(options = {}) {
   const apiKey = options.apiKey || process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  const model = options.model || "gemini-2.0-flash";
+  const model = options.model || "gemini-2.5-flash";
 
   function isReady() {
     return !!apiKey;

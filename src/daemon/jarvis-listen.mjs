@@ -19,6 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createGroqClient } from "../server/agent/groq-client.mjs";
+import { createGeminiClient } from "../server/agent/gemini-client.mjs";
 import { TOOL_SCHEMAS, executeTool } from "./jarvis-tools.mjs";
 import { memoryInit, memoryWrite } from "./shared-memory.mjs";
 import { logActivity } from "./activity-log.mjs";
@@ -81,6 +82,8 @@ let mode = "passive";
 let silentRounds = 0;
 let conversationHistory = [];
 let groqClient = null;
+let geminiClient = null;
+let activeProvider = "groq"; // "groq" or "gemini"
 let serverBaseUrl = "http://localhost:3210";
 
 function log(msg) {
@@ -182,14 +185,81 @@ function matchWakeWord(text) {
 }
 
 /**
- * Get Jarvis response with tool-calling loop.
- * When the LLM returns a tool call, execute it and feed the result back.
+ * Get the currently active AI client. Supports failover: Groq → Gemini.
+ */
+function getActiveClient() {
+  if (activeProvider === "gemini" && geminiClient?.isReady()) return geminiClient;
+  if (groqClient?.isReady()) return groqClient;
+  if (geminiClient?.isReady()) return geminiClient;
+  return null;
+}
+
+/**
+ * Switch to fallback provider when primary fails.
+ * Tracks failed providers to avoid ping-pong switching.
+ */
+let failedProviders = new Set(); // providers that are currently rate-limited
+let allExhaustedUntil = 0; // timestamp — skip all requests until this time
+
+function switchProvider(reason) {
+  failedProviders.add(activeProvider);
+
+  // Check if ALL providers are exhausted
+  const availableProviders = ["groq", "gemini"].filter(p => {
+    if (failedProviders.has(p)) return false;
+    if (p === "groq" && !groqClient?.isReady()) return false;
+    if (p === "gemini" && !geminiClient?.isReady()) return false;
+    return true;
+  });
+
+  if (availableProviders.length === 0) {
+    // All providers exhausted — cooldown for 60s
+    allExhaustedUntil = Date.now() + 60_000;
+    log(`\x1b[31m⚠ All AI providers rate-limited. Cooldown for 60s.\x1b[0m`);
+    logActivity({ agent: "jarvis-daemon", action: "all-providers-exhausted", success: false, meta: { reason } });
+    memoryWrite("jarvis-status", "all-providers-exhausted");
+    // Schedule clearing failed providers after cooldown
+    setTimeout(() => {
+      failedProviders.clear();
+      allExhaustedUntil = 0;
+      log(`\x1b[36mCooldown over. Retrying providers.\x1b[0m`);
+      memoryWrite("jarvis-status", "online");
+    }, 60_000);
+    return false;
+  }
+
+  const oldProvider = activeProvider;
+  activeProvider = availableProviders[0];
+  log(`\x1b[33m⚡ Switching ${oldProvider} → ${activeProvider} (${reason.slice(0, 60)})\x1b[0m`);
+  logActivity({ agent: "jarvis-daemon", action: "provider-switch", success: true, meta: { from: oldProvider, to: activeProvider, reason: reason.slice(0, 100) } });
+  memoryWrite("jarvis-provider", { active: activeProvider, reason: reason.slice(0, 80), switchedAt: new Date().toISOString() });
+  return true;
+}
+
+// Periodically try to switch back to Groq (check every 10 min after failover)
+let groqRetryTimer = null;
+function scheduleGroqRetry() {
+  if (groqRetryTimer) return;
+  groqRetryTimer = setTimeout(() => {
+    groqRetryTimer = null;
+    failedProviders.delete("groq");
+    if (activeProvider === "gemini" && groqClient?.isReady()) {
+      log(`\x1b[36mTrying to switch back to Groq...\x1b[0m`);
+      activeProvider = "groq";
+    }
+  }, 10 * 60_000); // 10 minutes
+  groqRetryTimer.unref();
+}
+
+/**
+ * Get Jarvis response with tool-calling loop and multi-provider failover.
+ * Provider chain: Groq (free, fastest) → Gemini (free, higher daily limit).
  */
 async function getResponse(text) {
   const start = Date.now();
   conversationHistory.push({ role: "user", content: text });
 
-  // Aggressive trim — Groq free tier has 12K TPM limit
+  // Aggressive trim — free tier limits
   if (conversationHistory.length > 10) {
     conversationHistory = conversationHistory.slice(-10);
   }
@@ -201,59 +271,88 @@ async function getResponse(text) {
     conversationHistory = conversationHistory.slice(-6);
   }
 
+  // If all providers are in cooldown, don't even try
+  if (Date.now() < allExhaustedUntil) {
+    const waitSec = Math.ceil((allExhaustedUntil - Date.now()) / 1000);
+    return `All my AI providers are cooling down. Try again in ${waitSec} seconds.`;
+  }
+
   let finalResponse = "";
   let toolRounds = 0;
   let retries = 0;
-  const MAX_RETRIES = 3;
+  const MAX_RETRIES = 2;
   let consecutiveErrors = 0;
 
   while (toolRounds < MAX_TOOL_ROUNDS) {
     let response = "";
     let toolCalls = [];
-    let rateLimited = false;
+    let shouldRetry = false;
+
+    const client = getActiveClient();
+    if (!client) {
+      return "I have no available AI providers right now. Please check API keys.";
+    }
 
     try {
-      for await (const event of groqClient.stream(JARVIS_SYSTEM, conversationHistory, TOOL_SCHEMAS)) {
+      for await (const event of client.stream(JARVIS_SYSTEM, conversationHistory, TOOL_SCHEMAS)) {
         if (event.type === "text_delta") response += event.text;
         if (event.type === "tool_use_done") {
           toolCalls.push({ id: event.id, name: event.name, input: event.input });
         }
         if (event.type === "error") {
           consecutiveErrors++;
-          if (event.message.includes("429") && retries < MAX_RETRIES) {
-            const waitSec = 5 * (retries + 1); // escalating backoff: 5s, 10s, 15s
-            log(`\x1b[33mRate limited, waiting ${waitSec}s... (retry ${retries + 1}/${MAX_RETRIES})\x1b[0m`);
-            await new Promise(r => setTimeout(r, waitSec * 1000));
-            retries++;
-            rateLimited = true;
-            break;
+          const isRateLimit = event.message.includes("429") || event.message.includes("rate limit") || event.message.includes("Rate limit") || event.message.includes("quota");
+
+          if (isRateLimit) {
+            // Try switching provider first
+            const switched = switchProvider(`rate-limited: ${event.message.slice(0, 80)}`);
+            if (switched) {
+              scheduleGroqRetry();
+              shouldRetry = true;
+              retries = 0; // reset retries for new provider
+              break;
+            }
+            // Same provider, do backoff retry
+            if (retries < MAX_RETRIES) {
+              const waitSec = 5 * (retries + 1);
+              log(`\x1b[33mRate limited on ${activeProvider}, waiting ${waitSec}s... (retry ${retries + 1}/${MAX_RETRIES})\x1b[0m`);
+              await new Promise(r => setTimeout(r, waitSec * 1000));
+              retries++;
+              shouldRetry = true;
+              break;
+            }
           }
+
           // On repeated errors, clear history and try fresh
           if (consecutiveErrors >= 2) {
             log(`\x1b[33mMultiple errors, clearing conversation history\x1b[0m`);
             conversationHistory = [{ role: "user", content: text }];
             consecutiveErrors = 0;
-            rateLimited = true;
+            shouldRetry = true;
             break;
           }
-          log(`\x1b[31mAI Error: ${event.message}\x1b[0m`);
-          logActivity({ agent: "jarvis-daemon", action: "ai-error", success: false, error: event.message });
-          return "I hit a snag. Give me a moment and try again.";
+          log(`\x1b[31mAI Error (${activeProvider}): ${event.message}\x1b[0m`);
+          logActivity({ agent: "jarvis-daemon", action: "ai-error", success: false, error: event.message, meta: { provider: activeProvider } });
+          return "I'm having trouble thinking right now. Let me switch gears.";
         }
       }
     } catch (streamErr) {
-      log(`\x1b[31mStream error: ${streamErr.message}\x1b[0m`);
-      logActivity({ agent: "jarvis-daemon", action: "stream-error", success: false, error: streamErr.message });
-      // Clear history on stream errors to prevent stuck state
-      conversationHistory = [{ role: "user", content: text }];
-      return "I lost my train of thought. Could you repeat that?";
+      log(`\x1b[31mStream error (${activeProvider}): ${streamErr.message}\x1b[0m`);
+      logActivity({ agent: "jarvis-daemon", action: "stream-error", success: false, error: streamErr.message, meta: { provider: activeProvider } });
+      // Try switching provider on stream errors too
+      const switched = switchProvider(`stream-error: ${streamErr.message.slice(0, 80)}`);
+      if (switched) {
+        shouldRetry = true;
+      } else {
+        conversationHistory = [{ role: "user", content: text }];
+        return "I lost my train of thought. Could you repeat that?";
+      }
     }
 
-    if (rateLimited) continue; // retry the same round
-    consecutiveErrors = 0; // reset on success
+    if (shouldRetry) continue;
+    consecutiveErrors = 0;
 
     if (toolCalls.length === 0) {
-      // No tool calls — this is the final text response
       finalResponse = response;
       break;
     }
@@ -279,7 +378,6 @@ async function getResponse(text) {
     }
 
     toolRounds++;
-    // If we had text AND tool calls, save the text portion
     if (response) finalResponse = response;
   }
 
@@ -289,7 +387,7 @@ async function getResponse(text) {
     action: "conversation",
     durationMs,
     success: true,
-    meta: { userText: text.slice(0, 100), toolRounds },
+    meta: { userText: text.slice(0, 100), toolRounds, provider: activeProvider },
   });
 
   conversationHistory.push({ role: "assistant", content: finalResponse });
@@ -325,9 +423,19 @@ async function speak(text) {
  */
 async function main() {
   groqClient = createGroqClient();
-  if (!groqClient.isReady()) {
-    console.error("GROQ_API_KEY not set. Add it to .env");
+  geminiClient = createGeminiClient();
+
+  if (!groqClient.isReady() && !geminiClient.isReady()) {
+    console.error("No AI API keys set. Add GROQ_API_KEY or GEMINI_API_KEY to .env");
     process.exit(1);
+  }
+
+  // Start with Groq if available, otherwise Gemini
+  if (groqClient.isReady()) {
+    activeProvider = "groq";
+  } else {
+    activeProvider = "gemini";
+    log("Groq unavailable, starting with Gemini");
   }
 
   // Initialize shared memory
@@ -349,7 +457,8 @@ async function main() {
   console.log("\n\x1b[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m");
   console.log("\x1b[36m  Jarvis Always-On Daemon v2\x1b[0m");
   console.log("\x1b[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\x1b[0m");
-  console.log(`  Brain:    Llama 3.3 70B via Groq (free)`);
+  const providers = [groqClient?.isReady() && "Groq", geminiClient?.isReady() && "Gemini"].filter(Boolean).join(" → ");
+  console.log(`  Brain:    ${providers} (auto-failover)`);
   console.log(`  Voice:    Edge TTS → macOS say (fallback)`);
   console.log(`  STT:      Groq Whisper (free)`);
   console.log(`  Wake:     "Hey Jarvis" / "Jarvis"`);
@@ -365,7 +474,7 @@ async function main() {
   }, 30_000);
   heartbeatTimer.unref();
 
-  await speak("Jarvis online. I have tools and auto-learning. I can coordinate with Claude Code through shared memory.");
+  await speak(`Jarvis online with ${activeProvider === "groq" ? "Groq" : "Gemini"} and auto-failover.`);
 
   while (true) {
     try {
