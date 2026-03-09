@@ -29,6 +29,7 @@ import { createForceGraphView } from "./views/layouts/force-graph.mjs";
 import { createMediaCityView } from "./views/layouts/media-city.mjs";
 import { createNewspaperView } from "./views/layouts/newspaper.mjs";
 import { createFilterEngine } from "./filters/filter-engine.mjs";
+import { createSystemHudView } from "./views/layouts/system-hud.mjs";
 
 export async function initHUD(container, options = {}) {
   const hooks = createHooks();
@@ -108,6 +109,7 @@ export async function initHUD(container, options = {}) {
   viewRegistry.register(createForceGraphView());
   viewRegistry.register(createMediaCityView());
   viewRegistry.register(createNewspaperView());
+  viewRegistry.register(createSystemHudView());
 
   // 8. Filter engine — composable faceted filtering
   const filterEngine = createFilterEngine(hooks);

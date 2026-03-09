@@ -139,6 +139,74 @@ export function startServer(options = {}) {
       return;
     }
 
+    // Live system state for System HUD visualization
+    if (req.method === "GET" && url.pathname === "/agent/system-state") {
+      try {
+        const MEM_FILE = "/tmp/jarvis-daemon/shared-memory.json";
+        const LOG_FILE = "/tmp/jarvis-daemon/activity-log.jsonl";
+
+        // Read shared memory
+        let mem = {};
+        try { mem = JSON.parse(fs.readFileSync(MEM_FILE, "utf-8")); } catch {}
+
+        // Read last 50 activity log entries
+        let recentFlows = [];
+        try {
+          const lines = fs.readFileSync(LOG_FILE, "utf-8").trim().split("\n");
+          recentFlows = lines.slice(-50).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+        } catch {}
+
+        // Build provider status
+        const groq = createGroqClient();
+        const gemini = createGeminiClient();
+        const claude = createClaudeClient();
+
+        const providerInfo = mem["jarvis-provider"] || {};
+        const jarvisStatus = mem["jarvis-status"] || "unknown";
+
+        const state = {
+          agents: [
+            { id: "jarvis", name: "Jarvis Daemon", status: jarvisStatus, provider: providerInfo.active || "groq", tools: 11, pid: mem["jarvis-supervisor"]?.pid },
+            { id: "claude-code", name: "Claude Code", status: "active", provider: "claude", tools: 0 },
+          ],
+          providers: [
+            { id: "groq", name: "Groq (Llama 3.3 70B)", status: groq.isReady() ? (providerInfo.active === "gemini" ? "rate-limited" : "ok") : "unavailable", model: "llama-3.3-70b-versatile" },
+            { id: "gemini", name: "Gemini 2.5 Flash", status: gemini.isReady() ? (providerInfo.active === "gemini" ? "active" : "standby") : "unavailable", model: "gemini-2.5-flash" },
+            { id: "claude", name: "Claude Opus", status: claude.isReady() ? "active" : "unavailable", model: "claude-opus-4-6" },
+            { id: "whisper", name: "Groq Whisper (STT)", status: groq.isReady() ? "ok" : "unavailable", model: "whisper-large-v3" },
+            { id: "edge-tts", name: "Edge TTS", status: "ok", model: "en-US-GuyNeural" },
+          ],
+          tools: [
+            { id: "run_shell", name: "Shell", agent: "jarvis" },
+            { id: "open_browser", name: "Browser", agent: "jarvis" },
+            { id: "read_file", name: "Read File", agent: "jarvis" },
+            { id: "write_file", name: "Write File", agent: "jarvis" },
+            { id: "search_project", name: "Search", agent: "jarvis" },
+            { id: "read_memory", name: "Read Mem", agent: "jarvis" },
+            { id: "write_memory", name: "Write Mem", agent: "jarvis" },
+            { id: "record_lesson", name: "Learn", agent: "jarvis" },
+            { id: "write_kb", name: "KB Write", agent: "jarvis" },
+            { id: "read_activity_log", name: "Activity Log", agent: "jarvis" },
+            { id: "list_directory", name: "List Dir", agent: "jarvis" },
+          ],
+          memory: { id: "shared-memory", name: "Shared Memory", path: MEM_FILE, size: JSON.stringify(mem).length },
+          flows: recentFlows.slice(-20).map(f => ({
+            ts: f.ts, agent: f.agent, action: f.action, success: f.success,
+          })),
+          supervisor: mem["jarvis-supervisor"] || {},
+          heartbeat: mem["jarvis-heartbeat"],
+          _ts: new Date().toISOString(),
+        };
+
+        res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+        res.end(JSON.stringify(state));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+      return;
+    }
+
     // Edge TTS endpoint — synthesize text to MP3 audio
     if (req.method === "POST" && url.pathname === "/agent/tts") {
       try {
