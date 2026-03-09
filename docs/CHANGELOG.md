@@ -115,3 +115,37 @@ Real hand tracking via MediaPipe Tasks Vision (CDN, GPU-delegated). Detects: pin
 Live visualization of the agent swarm: agents, providers, tools, shared memory, data flows. Polls `/agent/system-state` every 2s. Concentric ring layout with color-coded nodes, pulsing animations for active agents, and labeled edges showing data flow types (uses, reads-writes, invokes).
 
 **Lesson:** Making the agent system observable is as important as making it functional. The system state endpoint aggregates shared memory + activity log into a single JSON response that the 3D visualization consumes.
+
+### 2026-03-09 — UNLOCK — Ollama Local Fallback (3-Tier Provider Chain)
+**Agent:** claude-code  **Confidence:** high
+**Impact:** architecture, reliability
+**Files:** `src/server/agent/ollama-client.mjs`, `src/daemon/jarvis-listen.mjs`
+
+Added Ollama (local llama3.1 8B) as third-tier fallback when both Groq and Gemini are rate-limited. Zero cost, zero rate limits. Auto-detects Ollama availability, re-checks every 60s. Provider chain: Groq → Gemini → Ollama.
+
+**Lesson:** Always have a local fallback that cannot be rate-limited. Local models are less capable but keep the agent alive. Users tolerate degraded quality better than total silence.
+
+### 2026-03-09 — ARCHITECTURE — Portals V4 Integration Spec
+**Agent:** claude-code  **Confidence:** high
+**Impact:** architecture
+**Files:** `specs/PORTALS_V4_INTEGRATION.md`
+
+Documented the full integration path for XRAI voice agent swarm into Portals V4 RN+Unity app. The adapter already exists (`portals-adapter.ts`). Integration is 3 phases: (1) wire WebSocket agent, (2) dual-mode voice local+cloud, (3) optional daemon background service.
+
+**Lesson:** The XRAI voice agent was designed framework-agnostic from day 1 (event bus, WebSocket protocol, no React deps in core). This made the Portals adapter trivially simple — just route events between systems.
+
+### 2026-03-09 — RESEARCH — Layered AR Performance Analysis
+**Agent:** claude-code (3 research sub-agents)  **Confidence:** high
+**Impact:** architecture
+**Files:** (research findings, not code)
+
+Comprehensive analysis of concurrent performance when stacking ARKit + MediaPipe + YOLO + RN bridge + LiveKit WebRTC + hologram VFX on mobile. Key findings:
+- GPU is the bottleneck (~22-37ms at peak, exceeds 33ms budget)
+- iPhone 15 Pro thermal-throttles to ~50% GPU in 10 min — iPad Pro M2 is the viable device
+- DO NOT route per-frame tracking data through RN-Unity bridge (use native plugin → NativeArray)
+- Jarvis AI commands (1-2Hz) are fine for the bridge
+- MediaPipe should run on Neural Engine (CoreML) to free GPU for rendering
+- Metavido is the right hologram playback format (hardware video decoder, ~zero GPU cost)
+- Gemini Nano is NOT suitable for real-time spatial processing (~10fps max)
+
+**Lesson:** The right architecture separates concerns by frequency: native layer owns per-frame data (30Hz), RN owns low-frequency events (1-2Hz), AI agent sits in RN. Never put high-frequency data through a JSON serialization bridge.
