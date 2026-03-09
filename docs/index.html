@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>XRAI Spatial Web — Jarvis HUD</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #000;
+      color: #e0e0e0;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+    h1 {
+      font-size: clamp(28px, 5vw, 48px);
+      font-weight: 300;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+      background: linear-gradient(135deg, #fff 0%, #4dd0e1 50%, #ba68c8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .subtitle {
+      font-size: 14px;
+      color: rgba(255,255,255,0.4);
+      margin-bottom: 40px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+    .demo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      max-width: 900px;
+      width: 100%;
+    }
+    .demo-card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 24px;
+      text-decoration: none;
+      color: #e0e0e0;
+      transition: all 0.3s ease;
+      backdrop-filter: blur(10px);
+    }
+    .demo-card:hover {
+      background: rgba(255,255,255,0.08);
+      border-color: rgba(255,255,255,0.2);
+      transform: translateY(-2px);
+    }
+    .demo-card h3 {
+      font-size: 16px;
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+    .demo-card p {
+      font-size: 13px;
+      color: rgba(255,255,255,0.5);
+      line-height: 1.5;
+    }
+    .demo-card .type {
+      font-size: 10px;
+      color: rgba(77,208,225,0.7);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+    .instructions {
+      margin-top: 40px;
+      max-width: 600px;
+      padding: 24px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 16px;
+      font-size: 13px;
+      line-height: 1.8;
+      color: rgba(255,255,255,0.5);
+    }
+    .instructions code {
+      background: rgba(255,255,255,0.08);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #4dd0e1;
+    }
+    .instructions h4 {
+      color: rgba(255,255,255,0.7);
+      margin-bottom: 8px;
+      font-weight: 500;
+    }
+    footer {
+      margin-top: 40px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.2);
+    }
+    footer a { color: rgba(77,208,225,0.5); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <h1>XRAI Spatial Web</h1>
+  <p class="subtitle">Powered by Jarvis HUD</p>
+
+  <div class="demo-grid">
+    <a class="demo-card" href="#" onclick="openDemo('https://en.wikipedia.org/wiki/Artificial_intelligence'); return false;">
+      <div class="type">Wikipedia</div>
+      <h3>Artificial Intelligence</h3>
+      <p>Complex article with deep heading structure, citations, media, and cross-links.</p>
+    </a>
+    <a class="demo-card" href="#" onclick="openDemo('https://github.com/mrdoob/three.js'); return false;">
+      <div class="type">GitHub</div>
+      <h3>Three.js Repository</h3>
+      <p>Open source 3D library. See contributors, forks, structure.</p>
+    </a>
+    <a class="demo-card" href="#" onclick="openDemo('https://developer.mozilla.org/en-US/docs/Web/API/WebXR_Device_API'); return false;">
+      <div class="type">MDN Docs</div>
+      <h3>WebXR Device API</h3>
+      <p>Technical documentation with structured headings and API references.</p>
+    </a>
+    <a class="demo-card" href="#" onclick="openDemo('https://arxiv.org/abs/1706.03762'); return false;">
+      <div class="type">Research Paper</div>
+      <h3>Attention Is All You Need</h3>
+      <p>Seminal transformer paper. Citations, authors, related work.</p>
+    </a>
+    <a class="demo-card" href="#" onclick="openDemo('https://www.nytimes.com'); return false;">
+      <div class="type">News</div>
+      <h3>New York Times</h3>
+      <p>News site with rich metadata, sections, media, and external links.</p>
+    </a>
+    <a class="demo-card" href="#" onclick="openDemo('https://needle.tools'); return false;">
+      <div class="type">WebXR Platform</div>
+      <h3>Needle Engine</h3>
+      <p>WebXR development platform — see their tech stack and content structure.</p>
+    </a>
+  </div>
+
+  <div class="instructions">
+    <h4>Run Locally</h4>
+    <code>git clone https://github.com/jt5d/xrai-spatial-web.git</code><br>
+    <code>cd xrai-spatial-web && npm install</code><br>
+    <code>node scrape.mjs --serve</code><br>
+    Open <code>http://localhost:3210/spatial</code><br><br>
+    <h4>Enable Jarvis Voice</h4>
+    <code>ANTHROPIC_API_KEY=sk-xxx node scrape.mjs --serve</code><br>
+    Click the mic button or type in the text field.<br><br>
+    <h4>Vision Pro / Mobile</h4>
+    Access via LAN URL shown in terminal. WebXR immersive-vr supported on visionOS.
+  </div>
+
+  <footer>
+    XRAI + Jarvis &mdash; <a href="https://github.com/jt5d/xrai-spatial-web">GitHub</a>
+  </footer>
+
+  <script>
+    function openDemo(url) {
+      // For GitHub Pages, we can't run the server, so show instructions
+      const encoded = encodeURIComponent(url);
+      const localUrl = `http://localhost:3210/spatial?url=${encoded}`;
+      const msg = `To view this demo, run the server locally:\\n\\nnode scrape.mjs --serve\\n\\nThen open:\\n${localUrl}`;
+      if (confirm(msg + '\\n\\nCopy the URL to clipboard?')) {
+        navigator.clipboard.writeText(localUrl);
+      }
+    }
+  </script>
+</body>
+</html>

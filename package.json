@@ -1,0 +1,28 @@
+{
+  "name": "web-scraper",
+  "version": "2.0.0",
+  "description": "Cross-platform web scraper — auto-detect browser tab, clipboard, URL, or web UI",
+  "main": "scrape.mjs",
+  "bin": {
+    "scrape": "./scrape.mjs"
+  },
+  "scripts": {
+    "start": "node scrape.mjs",
+    "serve": "node scrape.mjs --serve",
+    "test": "node --test test/"
+  },
+  "keywords": [
+    "scraper",
+    "web",
+    "cli",
+    "cross-platform"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "turndown": "^7.2.2",
+    "ws": "^8.19.0"
+  }
+}
