@@ -30,6 +30,7 @@ import { createMediaCityView } from "./views/layouts/media-city.mjs";
 import { createNewspaperView } from "./views/layouts/newspaper.mjs";
 import { createFilterEngine } from "./filters/filter-engine.mjs";
 import { createSystemHudView } from "./views/layouts/system-hud.mjs";
+import { createSystemMinimap } from "./render/system-minimap.mjs";
 
 export async function initHUD(container, options = {}) {
   const hooks = createHooks();
@@ -110,6 +111,11 @@ export async function initHUD(container, options = {}) {
   viewRegistry.register(createMediaCityView());
   viewRegistry.register(createNewspaperView());
   viewRegistry.register(createSystemHudView());
+
+  // 7b. System mini-map — always-visible agent health overlay
+  const systemMinimap = createSystemMinimap(container, hooks);
+  systemMinimap.build();
+  systemMinimap.show(); // visible by default
 
   // 8. Filter engine — composable faceted filtering
   const filterEngine = createFilterEngine(hooks);
@@ -220,6 +226,12 @@ export async function initHUD(container, options = {}) {
       toggle() { handTracker.toggle(); },
       isActive() { return handTracker.isActive(); },
     },
+    minimap: {
+      show() { systemMinimap.show(); },
+      hide() { systemMinimap.hide(); },
+      toggle() { systemMinimap.toggle(); },
+      isVisible() { return systemMinimap.isVisible(); },
+    },
     share: {
       generateQR() { qrSharing.generateQR(); },
     },
@@ -231,6 +243,7 @@ export async function initHUD(container, options = {}) {
       qrSharing.dispose();
       webcamGesture.dispose();
       handTracker.dispose();
+      systemMinimap.dispose();
       viewRegistry.dispose();
       graph.dispose();
       nodes.clear();
