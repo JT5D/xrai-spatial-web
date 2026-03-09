@@ -53,6 +53,22 @@ export function startServer(options = {}) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://localhost:${port}`);
 
+    // Quick health check — phone/device monitoring
+    if (req.method === "GET" && url.pathname === "/health") {
+      const uptime = Math.floor(process.uptime());
+      const mem = process.memoryUsage();
+      res.writeHead(200, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" });
+      res.end(JSON.stringify({
+        status: "ok",
+        uptime,
+        uptimeHuman: `${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m`,
+        memMB: Math.round(mem.rss / 1024 / 1024),
+        jarvis: aiClient.isReady(),
+        ts: Date.now(),
+      }));
+      return;
+    }
+
     // Serve the web UI
     if (req.method === "GET" && url.pathname === "/") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
