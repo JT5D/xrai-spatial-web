@@ -122,13 +122,11 @@ export function getSpatialUiHtml() {
       if (e.key === "Enter") extractBtn.click();
     });
 
-    // Auto-extract from URL param
+    // Auto-extract from URL param, or load a default demo page
     const params = new URLSearchParams(location.search);
-    const autoUrl = params.get("url");
-    if (autoUrl) {
-      urlInput.value = autoUrl;
-      extractAndLoad(autoUrl);
-    }
+    const autoUrl = params.get("url") || "https://en.wikipedia.org/wiki/Spatial_computing";
+    urlInput.value = autoUrl;
+    extractAndLoad(autoUrl);
   </script>
 </body>
 </html>`;

@@ -31,6 +31,8 @@ import { createNewspaperView } from "./views/layouts/newspaper.mjs";
 import { createFilterEngine } from "./filters/filter-engine.mjs";
 import { createSystemHudView } from "./views/layouts/system-hud.mjs";
 import { createSystemMinimap } from "./render/system-minimap.mjs";
+import { createViewSwitcher } from "./ui/view-switcher.mjs";
+import { createFilterPanel } from "./ui/filter-panel.mjs";
 
 export async function initHUD(container, options = {}) {
   const hooks = createHooks();
@@ -117,12 +119,19 @@ export async function initHUD(container, options = {}) {
   systemMinimap.build();
   systemMinimap.show(); // visible by default
 
+  // 7c. Wire gaze to view registry meshes
+  gaze.setViewRegistry(viewRegistry);
+
   // 8. Filter engine — composable faceted filtering
   const filterEngine = createFilterEngine(hooks);
 
   // 8b. Wire view registry + filter engine into agent tools
   agentTools.setViewRegistry(viewRegistry);
   agentTools.setFilterEngine(filterEngine);
+
+  // 8c. UI overlays — view switcher, filter panel, URL bar
+  const viewSwitcher = createViewSwitcher(container, viewRegistry, hooks);
+  const filterPanel = createFilterPanel(container, filterEngine, hooks);
 
   // 9. Handle view switch requests from agent tools
   hooks.on("view:switch-request", async ({ name }) => {
@@ -236,6 +245,8 @@ export async function initHUD(container, options = {}) {
       generateQR() { qrSharing.generateQR(); },
     },
     dispose() {
+      viewSwitcher.dispose();
+      filterPanel.dispose();
       agentBridge.dispose();
       voiceInput.dispose();
       voiceOutput.dispose();

@@ -1,0 +1,183 @@
+#-------------------------------------------------------------------------------#
+#               Qodana analysis is configured by qodana.yaml file               #
+#             https://www.jetbrains.com/help/qodana/qodana-yaml.html            #
+#-------------------------------------------------------------------------------#
+#################################################################################
+#              WARNING: Do not store sensitive information in this file,        #
+#               as its contents will be included in the Qodana report.          #
+#################################################################################
+version: "1.0"
+#Specify inspection profile for code analysis
+profile:
+  name: qodana.starter
+#Enable inspections
+#include:
+#  - name: <SomeEnabledInspectionId>
+#Disable inspections
+#exclude:
+#  - name: <SomeDisabledInspectionId>
+#    paths:
+#      - <path/where/not/run/inspection>
+#Execute shell command before Qodana execution (Applied in CI/CD pipeline)
+#bootstrap: sh ./prepare-qodana.sh
+#Install IDE plugins before Qodana execution (Applied in CI/CD pipeline)
+#plugins:
+#  - id: <plugin.id> #(plugin id can be found at https://plugins.jetbrains.com)
+# Quality gate. Will fail the CI/CD pipeline if any condition is not met
+# severityThresholds - configures maximum thresholds for different problem severities
+# testCoverageThresholds - configures minimum code coverage on a whole project and newly added code
+# Code Coverage is available in Ultimate and Ultimate Plus plans
+#failureConditions:
+#  severityThresholds:
+#    any: 15
+#    critical: 5
+#  testCoverageThresholds:
+#    fresh: 70
+#    total: 50
+#Specify Qodana linter for analysis (Applied in CI/CD pipeline)
+linter: jetbrains/qodana-js:2025.3
+exclude:
+  - name: All
+    paths:
+      - e2e
+      - e2e/dashboard.spec.mjs
+      - e2e/health.spec.mjs
+      - e2e/helpers.mjs
+      - e2e/multiplayer.spec.mjs
+      - e2e/scraper-ui.spec.mjs
+      - e2e/screenshots.spec.mjs
+      - e2e/spatial-viewer.spec.mjs
+      - e2e/websocket-agent.spec.mjs
+      - packages
+      - packages/voice-agent
+      - packages/voice-agent/tts
+      - packages/voice-agent/tts/provider-edge-tts.mjs
+      - packages/voice-agent/tts/provider-elevenlabs.mjs
+      - packages/voice-agent/tts/provider-interface.mjs
+      - packages/voice-agent/tts/provider-web-speech.mjs
+      - packages/voice-agent/agent-bridge.mjs
+      - packages/voice-agent/agent-overlay.mjs
+      - packages/voice-agent/event-bus.mjs
+      - packages/voice-agent/index.mjs
+      - packages/voice-agent/voice-input.mjs
+      - packages/voice-agent/voice-output.mjs
+      - src
+      - src/daemon
+      - src/daemon/activity-log.mjs
+      - src/daemon/agent-learning.mjs
+      - src/daemon/jarvis-keepalive.mjs
+      - src/daemon/jarvis-listen.mjs
+      - src/daemon/jarvis-supervisor.mjs
+      - src/daemon/jarvis-tools.mjs
+      - src/daemon/kb-writer.mjs
+      - src/daemon/shared-memory.mjs
+      - src/lib
+      - src/lib/wire-system.mjs
+      - src/server
+      - src/server/agent
+      - src/server/agent/agents
+      - src/server/agent/agents/navigation.mjs
+      - src/server/agent/agents/research.mjs
+      - src/server/agent/agent-registry.mjs
+      - src/server/agent/agent-ws.mjs
+      - src/server/agent/claude-client.mjs
+      - src/server/agent/edge-tts-proxy.mjs
+      - src/server/agent/elevenlabs-proxy.mjs
+      - src/server/agent/failover-client.mjs
+      - src/server/agent/gemini-client.mjs
+      - src/server/agent/groq-client.mjs
+      - src/server/agent/jarvis.mjs
+      - src/server/agent/ollama-client.mjs
+      - src/server/agent/tools-schema.mjs
+      - src/server/hud
+      - src/server/hud/agent
+      - src/server/hud/agent/tts
+      - src/server/hud/agent/tts/provider-edge-tts.mjs
+      - src/server/hud/agent/tts/provider-elevenlabs.mjs
+      - src/server/hud/agent/tts/provider-interface.mjs
+      - src/server/hud/agent/tts/provider-web-speech.mjs
+      - src/server/hud/agent/agent-bridge.mjs
+      - src/server/hud/agent/agent-overlay.mjs
+      - src/server/hud/agent/agent-tools.mjs
+      - src/server/hud/agent/voice-input.mjs
+      - src/server/hud/agent/voice-output.mjs
+      - src/server/hud/filters
+      - src/server/hud/filters/filter-engine.mjs
+      - src/server/hud/interaction
+      - src/server/hud/interaction/camera-animator.mjs
+      - src/server/hud/interaction/focus.mjs
+      - src/server/hud/interaction/gaze.mjs
+      - src/server/hud/interaction/hand-tracker.mjs
+      - src/server/hud/interaction/webcam-gesture.mjs
+      - src/server/hud/render
+      - src/server/hud/render/bloom.mjs
+      - src/server/hud/render/connectors.mjs
+      - src/server/hud/render/info-card.mjs
+      - src/server/hud/render/labels.mjs
+      - src/server/hud/render/nodes.mjs
+      - src/server/hud/render/reticle.mjs
+      - src/server/hud/render/system-minimap.mjs
+      - src/server/hud/render/vignette.mjs
+      - src/server/hud/sharing
+      - src/server/hud/sharing/qr-code.mjs
+      - src/server/hud/stubs
+      - src/server/hud/stubs/agent.mjs
+      - src/server/hud/stubs/skills.mjs
+      - src/server/hud/stubs/tools.mjs
+      - src/server/hud/theme
+      - src/server/hud/theme/tokens.mjs
+      - src/server/hud/ui
+      - src/server/hud/ui/filter-panel.mjs
+      - src/server/hud/ui/url-bar.mjs
+      - src/server/hud/ui/view-switcher.mjs
+      - src/server/hud/views
+      - src/server/hud/views/layouts
+      - src/server/hud/views/layouts/force-graph.mjs
+      - src/server/hud/views/layouts/media-city.mjs
+      - src/server/hud/views/layouts/newspaper.mjs
+      - src/server/hud/views/layouts/system-hud.mjs
+      - src/server/hud/views/view-registry.mjs
+      - src/server/hud/engine.mjs
+      - src/server/hud/graph.mjs
+      - src/server/hud/hooks.mjs
+      - src/server/hud/orchestrator.mjs
+      - src/server/multiplayer
+      - src/server/multiplayer/presence-ws.mjs
+      - src/server/multiplayer/room-manager.mjs
+      - src/server/multiplayer/room-state.mjs
+      - src/server/xrai-format
+      - src/server/xrai-format/schema.mjs
+      - src/server/xrai-format/serialize.mjs
+      - src/server/dashboard-ui.mjs
+      - src/server/index.mjs
+      - src/server/spatial-ui.mjs
+      - src/server/ui.mjs
+      - src/url-sources
+      - src/url-sources/clipboard.mjs
+      - src/url-sources/detect-macos.mjs
+      - src/url-sources/detect-windows.mjs
+      - src/url-sources/index.mjs
+      - src/cli.mjs
+      - src/extractor.mjs
+      - src/output.mjs
+      - src/scraper.mjs
+      - test
+      - test/agent-registry.test.mjs
+      - test/claude-client.test.mjs
+      - test/edge-tts.test.mjs
+      - test/extractor.test.mjs
+      - test/filter-engine.test.mjs
+      - test/hand-tracker.test.mjs
+      - test/hooks.test.mjs
+      - test/jarvis.test.mjs
+      - test/multiplayer.test.mjs
+      - test/server.test.mjs
+      - test/theme.test.mjs
+      - test/tools-schema.test.mjs
+      - test/ui-controls.test.mjs
+      - test/view-registry.test.mjs
+      - test/voice-agent-pkg.test.mjs
+      - test/wire-system.test.mjs
+      - test/xrai-format.test.mjs
+      - playwright.config.mjs
+      - scrape.mjs

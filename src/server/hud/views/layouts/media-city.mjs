@@ -99,6 +99,13 @@ export function createMediaCityView() {
       // Animate entrance
       this._animateEntrance();
 
+      // Set bird's-eye camera for city overview
+      if (ctx?.camera && ctx?.engine?.controls) {
+        ctx.camera.position.set(0, 100, 40);
+        ctx.engine.controls.target.set(0, 0, 0);
+        ctx.engine.controls.update();
+      }
+
       ctx.hooks.emit("view:generated", { name: "media-city", nodeCount: graphData.nodes.length });
     },
 

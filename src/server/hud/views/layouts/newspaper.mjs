@@ -78,6 +78,13 @@ export function createNewspaperView() {
       // Animate
       this._animateEntrance();
 
+      // Set front-facing camera for newspaper wall
+      if (ctx?.camera && ctx?.engine?.controls) {
+        ctx.camera.position.set(0, 5, 65);
+        ctx.engine.controls.target.set(0, 5, 0);
+        ctx.engine.controls.update();
+      }
+
       ctx.hooks.emit("view:generated", { name: "newspaper", nodeCount: graphData.nodes.length });
     },
 

@@ -14,6 +14,7 @@ export function createGaze(camera, renderer, nodesModule, hooks) {
   let currentTarget = null; // nodeId currently under pointer
   let enterTime = 0;       // when pointer entered current target
   let hasHovered = false;   // whether 230ms delay has elapsed
+  let viewRegistry = null;  // set via setViewRegistry() for view-specific meshes
 
   function onPointerMove(event) {
     const rect = renderer.domElement.getBoundingClientRect();
@@ -30,12 +31,28 @@ export function createGaze(camera, renderer, nodesModule, hooks) {
   renderer.domElement.addEventListener("pointermove", onPointerMove);
   renderer.domElement.addEventListener("click", onClick);
 
+  function setViewRegistry(vr) {
+    viewRegistry = vr;
+  }
+
   function update() {
     raycaster.setFromCamera(pointer, camera);
-    const meshes = nodesModule.getMeshes();
+    // Combine legacy node meshes with view registry meshes
+    const meshes = [
+      ...nodesModule.getMeshes(),
+      ...(viewRegistry?.getMeshes() || []),
+    ];
     const intersects = raycaster.intersectObjects(meshes, false);
 
-    const hit = intersects.length > 0 ? intersects[0].object.userData.nodeId : null;
+    let hit = null;
+    if (intersects.length > 0) {
+      const obj = intersects[0].object;
+      hit = obj.userData?.nodeId || null;
+      // For InstancedMesh, emit gaze:intersect so force-graph can resolve the instance
+      if (!hit && intersects[0].instanceId !== undefined) {
+        hooks.emit("gaze:intersect", { object: obj, instanceId: intersects[0].instanceId });
+      }
+    }
 
     if (hit !== currentTarget) {
       // Left previous target
@@ -66,5 +83,5 @@ export function createGaze(camera, renderer, nodesModule, hooks) {
     renderer.domElement.removeEventListener("click", onClick);
   }
 
-  return { update, dispose };
+  return { update, setViewRegistry, dispose };
 }

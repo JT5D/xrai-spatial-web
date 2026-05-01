@@ -25,6 +25,7 @@ const LOG_FILE = "/tmp/jarvis-daemon/keepalive.log";
 
 const HEALTH_CHECK_INTERVAL = 15_000; // 15s
 const HEARTBEAT_INTERVAL = 10_000;    // 10s
+const IDLE_TIMEOUT = 60 * 60 * 1000;  // 1 hour — release caffeinate after this much inactivity
 
 function log(msg) {
   const ts = new Date().toLocaleTimeString();
@@ -84,18 +85,52 @@ function ensureServer() {
   }
 }
 
-function ensureCaffeinate() {
-  if (isProcessRunning("caffeinate")) {
+// --- Single-instance caffeinate with idle timeout ---
+let caffeinatePid = null;
+let lastActivityTime = Date.now();
+
+function getLastActivity() {
+  try {
+    const raw = fs.readFileSync(MEM_FILE, "utf-8");
+    const mem = JSON.parse(raw);
+    // Check all heartbeats — any agent activity counts
+    const timestamps = [
+      mem["jarvis-heartbeat"] || 0,
+      mem["keepalive-heartbeat"] || 0,
+      mem._lastUpdated ? new Date(mem._lastUpdated).getTime() : 0,
+    ];
+    const latest = Math.max(...timestamps);
+    if (latest > lastActivityTime) lastActivityTime = latest;
+  } catch {}
+  return lastActivityTime;
+}
+
+function markActivity() {
+  lastActivityTime = Date.now();
+}
+
+function isCaffeinateAlive() {
+  if (!caffeinatePid) return false;
+  try {
+    process.kill(caffeinatePid, 0); // signal 0 = existence check
     return true;
+  } catch {
+    caffeinatePid = null;
+    return false;
   }
-  log("caffeinate not running — starting...");
+}
+
+function startCaffeinate() {
+  if (isCaffeinateAlive()) return true;
+  log("Starting caffeinate (single instance)...");
   try {
     const child = spawn("caffeinate", ["-dims"], {
       detached: true,
       stdio: "ignore",
     });
     child.unref();
-    log("caffeinate started");
+    caffeinatePid = child.pid;
+    log(`caffeinate started (PID ${caffeinatePid})`);
     return true;
   } catch (err) {
     log(`Failed to start caffeinate: ${err.message}`);
@@ -103,15 +138,45 @@ function ensureCaffeinate() {
   }
 }
 
+function stopCaffeinate() {
+  if (!caffeinatePid) return;
+  try {
+    process.kill(caffeinatePid, "SIGTERM");
+    log(`caffeinate stopped (PID ${caffeinatePid}) — system may sleep`);
+  } catch {}
+  caffeinatePid = null;
+}
+
+function ensureCaffeinate() {
+  const lastActive = getLastActivity();
+  const idleMs = Date.now() - lastActive;
+
+  if (idleMs > IDLE_TIMEOUT) {
+    // Idle for over 1 hour — let the system sleep
+    if (isCaffeinateAlive()) {
+      log(`Idle for ${Math.floor(idleMs / 60000)}min (>${Math.floor(IDLE_TIMEOUT / 60000)}min) — releasing caffeinate`);
+      stopCaffeinate();
+    }
+    return false;
+  }
+
+  // Active — keep awake
+  return startCaffeinate();
+}
+
 function writeHeartbeat() {
   try {
     const raw = fs.readFileSync(MEM_FILE, "utf-8");
     const mem = JSON.parse(raw);
     mem["keepalive-heartbeat"] = Date.now();
+    const idleMin = Math.floor((Date.now() - getLastActivity()) / 60000);
     mem["keepalive-status"] = {
       supervisor: isProcessRunning("jarvis-supervisor.mjs"),
       server: isProcessRunning("scrape.mjs --serve"),
-      caffeinate: isProcessRunning("caffeinate"),
+      caffeinate: isCaffeinateAlive(),
+      caffeinatePid: caffeinatePid,
+      idleMin,
+      sleepAllowed: idleMin >= Math.floor(IDLE_TIMEOUT / 60000),
       pid: process.pid,
       uptimeMin: Math.floor(process.uptime() / 60),
     };
@@ -148,6 +213,8 @@ function checkForWakeEvent() {
 
 function healthCheck() {
   const woke = checkForWakeEvent();
+
+  if (woke) markActivity(); // wake = activity
 
   const supervisorOk = ensureSupervisor();
   const serverOk = ensureServer();
@@ -186,11 +253,12 @@ healthCheck();
 const hcTimer = setInterval(healthCheck, HEALTH_CHECK_INTERVAL);
 const hbTimer = setInterval(writeHeartbeat, HEARTBEAT_INTERVAL);
 
-// Graceful shutdown
+// Graceful shutdown — clean up our single caffeinate
 function shutdown() {
   log("Keep-alive shutting down...");
   clearInterval(hcTimer);
   clearInterval(hbTimer);
+  stopCaffeinate();
   process.exit(0);
 }
 process.on("SIGINT", shutdown);

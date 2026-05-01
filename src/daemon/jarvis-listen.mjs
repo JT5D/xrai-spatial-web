@@ -69,7 +69,9 @@ CRITICAL RULES:
 - If the user says "don't talk so much", respond in 1 sentence max.`;
 
 // Config
-const WAKE_WORDS = ["jarvis", "hey jarvis", "ok jarvis", "yo jarvis"];
+const WAKE_WORDS = ["jarvis", "hey jarvis", "ok jarvis", "yo jarvis",
+  "jarves", "jarvus", "jarvas", "jervis", "jarv", "javis", "jarfis",
+  "hey jarves", "hey jarvus", "hey jervis", "hey javis"];
 const RECORD_SECONDS = 5;
 const ACTIVE_RECORD_SECONDS = 15;
 const SILENCE_THRESHOLD = "1.5%";
@@ -150,9 +152,22 @@ function recordAudio(seconds, silenceDuration) {
 }
 
 /**
- * Transcribe audio using Groq Whisper (free).
+ * Transcribe audio using Groq Whisper (free), with local Whisper fallback.
  */
 async function transcribe(audioPath) {
+  // Try Groq Whisper first
+  try {
+    return await transcribeGroq(audioPath);
+  } catch (err) {
+    if (err.message?.includes("429") || err.message?.includes("rate limit") || err.message?.includes("Rate limit")) {
+      log(`\x1b[33mGroq Whisper rate-limited, falling back to local Whisper...\x1b[0m`);
+      return await transcribeLocal(audioPath);
+    }
+    throw err;
+  }
+}
+
+async function transcribeGroq(audioPath) {
   const formData = new FormData();
   formData.append("file", new Blob([fs.readFileSync(audioPath)]), "audio.wav");
   formData.append("model", "whisper-large-v3");
@@ -172,6 +187,30 @@ async function transcribe(audioPath) {
 
   const data = await res.json();
   return data.text?.trim() || "";
+}
+
+async function transcribeLocal(audioPath) {
+  try {
+    const outDir = "/tmp/jarvis-daemon/whisper-out";
+    fs.mkdirSync(outDir, { recursive: true });
+    execSync(
+      `whisper "${audioPath}" --model base --language en --output_format json --output_dir "${outDir}"`,
+      { timeout: 30000, encoding: "utf-8", stdio: "pipe" }
+    );
+    const baseName = path.basename(audioPath, ".wav");
+    const jsonPath = `${outDir}/${baseName}.json`;
+    if (fs.existsSync(jsonPath)) {
+      const data = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+      try { fs.unlinkSync(jsonPath); } catch {}
+      const text = data.text?.trim() || "";
+      if (text) log(`\x1b[32m[Local Whisper] "${text}"\x1b[0m`);
+      return text;
+    }
+    return "";
+  } catch (e) {
+    log(`\x1b[31mLocal Whisper failed: ${e.message?.slice(0, 100)}\x1b[0m`);
+    return "";
+  }
 }
 
 /**
