@@ -75,6 +75,9 @@ const WAKE_WORDS = ["jarvis", "hey jarvis", "ok jarvis", "yo jarvis",
 const RECORD_SECONDS = 5;
 const ACTIVE_RECORD_SECONDS = 15;
 const SILENCE_THRESHOLD = "1.5%";
+// Barge-in: threshold must sit ABOVE speaker→mic bleed of Jarvis's own TTS,
+// or he interrupts himself. 15% clears laptop-speaker bleed; tune per room.
+const BARGE_THRESHOLD = process.env.JARVIS_BARGE_THRESHOLD || "15%";
 const ACTIVE_SILENCE_SECS = "3.0";
 const PASSIVE_SILENCE_SECS = "1.5";
 const SILENCE_ROUNDS_BEFORE_PASSIVE = 3;
@@ -439,7 +442,40 @@ async function getResponse(text) {
 }
 
 /**
- * Speak text using Edge TTS via server, then play with afplay.
+ * Play audio but stop the moment the user talks over it (barge-in).
+ * A parallel sox capture arms a voice gate at BARGE_THRESHOLD (above TTS
+ * speaker→mic bleed); first sustained sound kills afplay. No sox → plays
+ * to completion, same as before. Returns true if interrupted.
+ */
+function playInterruptible(file) {
+  return new Promise((resolve) => {
+    const player = spawn("afplay", [file], { stdio: "ignore" });
+    const gateFile = path.join(TMP_DIR, `barge-${Date.now()}.wav`);
+    // sox blocks until it hears 0.3s above threshold, records 0.2s, exits.
+    const gate = spawn("sox", [
+      "-d", "-r", "16000", "-c", "1", "-b", "16", gateFile,
+      "silence", "1", "0.3", BARGE_THRESHOLD,
+      "trim", "0", "0.2",
+    ], { stdio: "ignore" });
+    let interrupted = false;
+    gate.on("close", () => {
+      if (player.exitCode === null) {
+        interrupted = true;
+        player.kill("SIGTERM");
+      }
+      if (fs.existsSync(gateFile)) fs.unlinkSync(gateFile);
+    });
+    gate.on("error", () => {}); // no sox → gate dead, playback unaffected
+    player.on("close", () => {
+      if (gate.exitCode === null) gate.kill("SIGTERM");
+      resolve(interrupted);
+    });
+    player.on("error", () => resolve(false));
+  });
+}
+
+/**
+ * Speak text using Edge TTS via server, then play with afplay (barge-in aware).
  */
 async function speak(text) {
   if (!text) return;
@@ -454,7 +490,8 @@ async function speak(text) {
     const outFile = path.join(TMP_DIR, `speak-${Date.now()}.mp3`);
     const buffer = Buffer.from(await res.arrayBuffer());
     fs.writeFileSync(outFile, buffer);
-    execSync(`afplay "${outFile}"`, { stdio: "pipe" });
+    const interrupted = await playInterruptible(outFile);
+    if (interrupted) log("(barge-in — stopped speaking)");
     fs.unlinkSync(outFile);
   } catch (err) {
     log(`Edge TTS failed, using macOS voice: ${err.message}`);
